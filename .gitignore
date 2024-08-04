@@ -1,0 +1,11 @@
+# Ignore build files
+build/
+
+# Ignore log files
+log/
+
+# Ignore install files
+install/
+
+# Ignore the gazebo_ros_control files
+src/gazebo_ros2_control
