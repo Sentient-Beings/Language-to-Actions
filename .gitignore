@@ -9,3 +9,6 @@ install/
 
 # Ignore the gazebo_ros_control files
 src/gazebo_ros2_control
+
+# ven
+venv/
