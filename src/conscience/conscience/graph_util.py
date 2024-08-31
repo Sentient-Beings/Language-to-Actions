@@ -3,7 +3,6 @@ from dotenv import load_dotenv
 from langgraph.graph import StateGraph, START, END
 from typing import Annotated, Sequence , Dict , List  ,Callable
 from typing_extensions import TypedDict
-from langgraph.graph import StateGraph, START, END
 from langchain.tools import BaseTool, StructuredTool, tool
 from langchain_core.messages import HumanMessage, ToolMessage , SystemMessage , BaseMessage , AIMessage
 from IPython.display import Image, display
@@ -11,8 +10,11 @@ from langchain.tools import Tool
 from langchain_groq import ChatGroq
 from typing import Optional, Type
 from pydantic import BaseModel
-from typing import Annotated, Sequence , Dict , List
-from langchain.tools import Tool
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class State(TypedDict):
     """
@@ -28,6 +30,7 @@ def process_input(state: State) -> State:
     '''
     process the input from the user
     '''
+    logger.info(f"Processing user input: {state['user_input']}")
     state['user_input'] = state['user_input']
     return state
 
@@ -45,15 +48,19 @@ def set_sensor_data_getter(getter: SensorDataGetter):
     '''
     global _get_sensor_data
     _get_sensor_data = getter
+    logger.info("Sensor data getter has been set")
 
 def get_sensor_data() -> Dict[str, float]:
     '''
     a wrapper around the actual sensor data getter
     '''
-    return _get_sensor_data()
+    logger.debug("Retrieving sensor data")
+    data = _get_sensor_data()
+    logger.info(f"Sensor data retrieved: {data}")
+    return data
 
 sensor_data_tool = Tool(
-    name="get_sensor_data",
+    name="lidar_sensor_data",
     func=get_sensor_data,
     description="Obtains the sensor data, essential before making any decisions regarding the user's input. This tool does not require any arguments.",
     args_schema=GetSensorDataInput
@@ -67,11 +74,13 @@ def define_model() -> Type[ChatGroq]:
     define the model with the tools that are required
     For now, we only need the GetSensorDataTool
     '''
+    logger.info("Defining ChatGroq model with tools")
     model = ChatGroq(model="llama3-8b-8192", temperature=0)
     model_with_tools = model.bind_tools([sensor_data_tool])
     return model_with_tools
 
 def LLM_Analyze(state: Dict) -> Dict:
+    logger.info("Starting LLM analysis")
     model_with_tools = define_model()
     messages = [
         SystemMessage(content="""You are an AI assistant that can use tools to gather information. 
@@ -82,6 +91,7 @@ def LLM_Analyze(state: Dict) -> Dict:
     ]
     response = model_with_tools.invoke(messages)
     state['response'] = [response]
+    logger.info("LLM analysis completed")
     return state
 
 class BasicToolNode:
@@ -89,24 +99,43 @@ class BasicToolNode:
     This class actually executes the tool and returns the output
     '''
     def __init__(self, tools: List[Tool]) -> None:
+        '''
+        map the tool name to the tool object
+        '''
         self.tools_by_name = {tool.name: tool for tool in tools}
+        logger.info(f"BasicToolNode initialized with tools: {list(self.tools_by_name.keys())}")
 
     def __call__(self, state: Dict) -> Dict:
+        '''
+        execute the tools and update the state
+        '''
+        logger.info("Executing tools")
         messages = state.get('response', [])
         if not messages or not isinstance(messages[-1], AIMessage):
+            logger.warning("No AI message found in state")
             return state
 
         ai_message = messages[-1]
         tool_calls = ai_message.additional_kwargs.get('tool_calls', [])
-
+        '''
+        iterate over the tool calls and execute the tools
+        For each tool call:
+        
+        (1) finds the corresponding tool by name.
+        (2) Executes the tool (in this case, always with an empty query).
+        (3) Creates a ToolMessage with the tool's output.
+        (4) Adds the tool output to the state and appends the ToolMessage to the response.
+        '''
         for tool_call in tool_calls:
             tool_name = tool_call.get('function', {}).get('name')
             if tool_name not in self.tools_by_name:
+                logger.warning(f"Tool {tool_name} not found")
                 continue
 
             tool = self.tools_by_name[tool_name]
             
             try:
+                logger.info(f"Invoking tool: {tool_name}")
                 tool_output = tool.invoke({"query": ""})
                 tool_message = ToolMessage(
                     content=str(tool_output),
@@ -114,14 +143,15 @@ class BasicToolNode:
                 )
                 state['tool_output'] = tool_message
                 state['response'].append(tool_message)
+                logger.info(f"Tool {tool_name} executed successfully")
             except Exception as e:
-                print(f"Error executing tool {tool_name}: {str(e)}")
+                logger.error(f"Error executing tool {tool_name}: {str(e)}")
                 state['error'] = f"Error executing tool {tool_name}: {str(e)}"
 
         return state
 
 def final_response(state: Dict) -> Dict:
-    print("Entering final_response")
+    logger.info("Generating final response")
     
     # Create a new ChatGroq instance without tools
     model_without_tools = ChatGroq(
@@ -145,14 +175,14 @@ def final_response(state: Dict) -> Dict:
     response = model_without_tools.invoke(messages)
     state['response'].append(response)
     state['final_answer'] = response.content
-    print(f"Generated final answer: {state['final_answer']}")
-    print("Exiting final_response")
+    logger.info(f"Generated final answer: {state['final_answer']}")
     return state
 
 def build_graph(graph_builder:StateGraph, tool_node) -> StateGraph:
     '''
     build the graph 
     '''
+    logger.info("Building graph")
     graph_builder.add_node("process_user_input", process_input)
     graph_builder.add_edge(START, "process_user_input")
     
@@ -167,15 +197,23 @@ def build_graph(graph_builder:StateGraph, tool_node) -> StateGraph:
     
     graph_builder.add_edge("final_response", END)
     graph = graph_builder.compile()
+    logger.info("Graph built and compiled")
     return graph
+
+_cached_graph = None
 
 def setup_graph():
-    graph_builder = StateGraph(State)
-    tool_node = setup_tools()
-    graph = build_graph(graph_builder, tool_node)
-    return graph
+    global _cached_graph
+    if _cached_graph is None:
+        logger.info("Setting up graph")
+        graph_builder = StateGraph(State)
+        tool_node = setup_tools()
+        _cached_graph = build_graph(graph_builder, tool_node)
+        logger.info("Graph setup completed")
+    return _cached_graph
 
 def run_graph(user_message: str):
+    logger.info(f"Running graph with user message: {user_message}")
     initial_state = {
         "user_input": user_message,
         "sensor_data": {}, 
@@ -185,4 +223,5 @@ def run_graph(user_message: str):
     }
     graph = setup_graph()
     result = graph.invoke(initial_state)
+    logger.info("Graph execution completed")
     return result
