@@ -1,6 +1,8 @@
 import rclpy
 from rclpy.node import Node
 from agent_interfaces.srv import GetSensorDistances
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from std_msgs.msg import String
 from .graph_util import run_graph , set_sensor_data_getter
 import time
@@ -12,8 +14,10 @@ class Agent(Node):
     def __init__(self):
         super().__init__('agent')
         self.declare_parameter('user_input', '')
-        self.create_subscription(String, 'user_input', self.user_input_callback, 10)
-        self.sensor_client_ = self.create_client(GetSensorDistances, 'get_saftey_distance')
+        user_callback_group = MutuallyExclusiveCallbackGroup()
+        sensor_callback_group = MutuallyExclusiveCallbackGroup()
+        self.create_subscription(String, 'user_input', self.user_input_callback, 10, callback_group=user_callback_group)
+        self.sensor_client_ = self.create_client(GetSensorDistances, 'get_saftey_distance', callback_group=sensor_callback_group)
         self.lidar_sensor_reading = {}
         self.sensor_response = None
         self.get_logger().info('Agent initialized')
@@ -22,32 +26,31 @@ class Agent(Node):
         self.get_logger().info('Requesting minimum distance from sensor')
         while not self.sensor_client_.wait_for_service(timeout_sec=1.0):
             self.get_logger().warn('Service not available, waiting again...')
-        future = self.sensor_client_.call_async(request) 
-        future.add_done_callback(self.future_callback)
-        self.get_logger().debug('Async service call made')
+        self.sensor_future = self.sensor_client_.call_async(request)
+        self.sensor_future.add_done_callback(self.future_callback)
 
     def future_callback(self, future):
-        self.get_logger().info('Future callback called')    
         try:
             self.sensor_response = future.result()
             self.get_logger().info('Received sensor response')
         except Exception as e:
-            self.get_logger().error('Service call failed: %s', str(e))
+            self.get_logger().error(f'Service call failed: {str(e)}')
             self.sensor_response = None
+        finally:
+            self.sensor_future = None
 
     def get_laser_scan_data(self):
         if not self.lidar_sensor_reading:
             self.get_logger().warn('Lidar sensor reading is empty or None')
-            return None
+            return {}  # Return an empty dictionary instead of None
         self.get_logger().debug('Returning lidar sensor reading')
-        return self.lidar_sensor_reading  # Return the original, since we're only reading it
+        return self.lidar_sensor_reading
     
     def invoke_common_sense(self, user_input: str):
         try:
             request = GetSensorDistances.Request()
             self.sensor_response = None  # Reset the response
             self.get_minimum_distance(request)
-            
             self.get_logger().info('Waiting for sensor response')
             while self.sensor_response is None:
                 time.sleep(0.1)  # Short sleep to avoid busy waiting
@@ -92,9 +95,11 @@ class Agent(Node):
 def main(args=None):
     rclpy.init(args=args)
     agent = Agent()
+    executor = MultiThreadedExecutor()
+    executor.add_node(agent)
     
     try:
-        rclpy.spin(agent)
+        executor.spin()
     except KeyboardInterrupt:
         agent.get_logger().info('Keyboard interrupt received, shutting down')
     finally:
