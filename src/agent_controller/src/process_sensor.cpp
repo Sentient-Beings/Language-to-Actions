@@ -45,11 +45,11 @@ void ProcessSensor::process_sensor_data(const sensor_msgs::msg::LaserScan::Share
     int max_index_left = static_cast<int>((2.356 - min_angle) / angle_increment);
 
     // Now computing the mean distance for each side of the robot
-    min_distance_right = calculate_min(std::vector<float>(ranges.begin() + min_index_right, ranges.begin() + max_index_right));
-    min_distance_left =  calculate_min(std::vector<float>(ranges.begin() + min_index_left, ranges.begin() + max_index_left));
-    min_distance_front = calculate_min(std::vector<float>(ranges.begin() + min_index_front, ranges.begin() + max_index_front));
+    this->min_distance_right = calculate_min(std::vector<float>(ranges.begin() + min_index_right, ranges.begin() + max_index_right));
+    this->min_distance_left =  calculate_min(std::vector<float>(ranges.begin() + min_index_left, ranges.begin() + max_index_left));
+    this->min_distance_front = calculate_min(std::vector<float>(ranges.begin() + min_index_front, ranges.begin() + max_index_front));
 
-
+    is_initialized = true;
     auto message = agent_interfaces::msg::SensorInterface();
     message.min_distance_right = min_distance_right;
     message.min_distance_left = min_distance_left;
@@ -64,9 +64,13 @@ void ProcessSensor::process_sensor_data_service(
     std::shared_ptr<agent_interfaces::srv::GetSensorDistances::Response> response)
 {
     RCLCPP_INFO(this->get_logger(), "Request for sensor distances received.");
-    response->min_distance_right = min_distance_right;
-    response->min_distance_left = min_distance_left;
-    response->min_distance_front = min_distance_front;
+    if (!is_initialized){
+        RCLCPP_ERROR(this->get_logger(), "Sensor data is not initialized.");
+        return;
+    }
+    response->min_distance_right = this->min_distance_right;
+    response->min_distance_left = this->min_distance_left;
+    response->min_distance_front = this->min_distance_front;
     RCLCPP_INFO(this->get_logger(), "Response sent.");
 }
 

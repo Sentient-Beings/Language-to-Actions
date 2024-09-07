@@ -23,6 +23,7 @@ class ProcessSensor : public rclcpp::Node
         double min_distance_right;
         double min_distance_left;
         double min_distance_front;
+        bool is_initialized;
     private:
         rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr subscription_;
         rclcpp::Publisher<agent_interfaces::msg::SensorInterface>::SharedPtr publisher_;
