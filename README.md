@@ -88,7 +88,12 @@ In order to run this successfully, you need to have a Groq API key. You can get 
 
 It is a work in progress, currently you can only query the agent with what it is observing from the output of the lidar data. 
 
-We will be integrating the additional behaviours like giving it capability to execute tasks, navigate, perform actions in the environment. 
+We will be integrating the additional behaviours like giving it capability to execute tasks using a lowlevel controller, navigate, perform actions in the environment. 
+
+![Project Structure](./graph.jpeg)
+
+This image provides a high-level overview of the project architecture and components.
+
 
 ## Future Work
 
