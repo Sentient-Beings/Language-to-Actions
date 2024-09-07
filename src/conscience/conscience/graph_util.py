@@ -12,12 +12,9 @@ from typing import Optional, Type
 from pydantic import BaseModel
 import logging
 
-# Global variable for the API key
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-# Check if the API key is set
 if not GROQ_API_KEY:
     raise ValueError("GROQ_API_KEY environment variable is not set")
-# Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -80,7 +77,7 @@ def define_model() -> Type[ChatGroq]:
     For now, we only need the GetSensorDataTool
     '''
     logger.info("Defining ChatGroq model with tools")
-    model = ChatGroq(model="llama3-8b-8192", temperature=0, api_key=GROQ_API_KEY)
+    model = ChatGroq(model="llama3-70b-8192", temperature=0, api_key=GROQ_API_KEY)
     model_with_tools = model.bind_tools([sensor_data_tool])
     return model_with_tools
 
@@ -160,7 +157,7 @@ def final_response(state: Dict) -> Dict:
     
     # Create a new ChatGroq instance without tools
     model_without_tools = ChatGroq(
-        model="llama3-8b-8192",
+        model="llama3-70b-8192",
         temperature=0,
         max_tokens=1000,
         request_timeout=60,
