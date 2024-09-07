@@ -64,7 +64,7 @@ This repository is a work in progress and currently demonstrates a proof-of-conc
 
 1. Launch the simulation environment:
    ```bash
-   ros2 launch articubot_one launch_sim.launch.py  
+   ros2 launch rabbit_one launch_sim.launch.py  
    ```
 
 2. In a new terminal, start the sensor processing node:
