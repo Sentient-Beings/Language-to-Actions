@@ -12,6 +12,11 @@ from typing import Optional, Type
 from pydantic import BaseModel
 import logging
 
+# Global variable for the API key
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# Check if the API key is set
+if not GROQ_API_KEY:
+    raise ValueError("GROQ_API_KEY environment variable is not set")
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -50,7 +55,7 @@ def set_sensor_data_getter(getter: SensorDataGetter):
     _get_sensor_data = getter
     logger.info("Sensor data getter has been set")
 
-def get_sensor_data() -> Dict[str, float]:
+def get_sensor_data(query: str = "") -> Dict[str, float]:
     '''
     a wrapper around the actual sensor data getter
     '''
@@ -62,7 +67,7 @@ def get_sensor_data() -> Dict[str, float]:
 sensor_data_tool = Tool(
     name="lidar_sensor_data",
     func=get_sensor_data,
-    description="Obtains the sensor data, essential before making any decisions regarding the user's input. This tool does not require any arguments.",
+    description="Obtains the sensor data, essential before making any decisions regarding the user's input. This tool does not require any specific input.",
     args_schema=GetSensorDataInput
 )
 
@@ -75,7 +80,7 @@ def define_model() -> Type[ChatGroq]:
     For now, we only need the GetSensorDataTool
     '''
     logger.info("Defining ChatGroq model with tools")
-    model = ChatGroq(model="llama3-8b-8192", temperature=0)
+    model = ChatGroq(model="llama3-8b-8192", temperature=0, api_key=GROQ_API_KEY)
     model_with_tools = model.bind_tools([sensor_data_tool])
     return model_with_tools
 
@@ -158,7 +163,8 @@ def final_response(state: Dict) -> Dict:
         model="llama3-8b-8192",
         temperature=0,
         max_tokens=1000,
-        request_timeout=60
+        request_timeout=60,
+        api_key=GROQ_API_KEY
     )
     
     # Extract the tool output from the state
