@@ -13,6 +13,7 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/SensorInterface.msg"
+  "msg/ControllerInterface.msg"
   "srv/GetSensorDistances.srv"
   DEPENDENCIES geometry_msgs
   DEPENDENCIES std_msgs

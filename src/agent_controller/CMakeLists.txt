@@ -19,10 +19,16 @@ add_executable(sensor_processor
 src/process_sensor.cpp
 src/process_sensor_node.cpp
 )
-ament_target_dependencies(sensor_processor rclcpp sensor_msgs agent_interfaces)
 
+add_executable(simple_controller 
+src/simple_controller.cpp
+src/simple_controller_node.cpp
+)
+ament_target_dependencies(sensor_processor rclcpp sensor_msgs agent_interfaces)
+ament_target_dependencies(simple_controller rclcpp sensor_msgs agent_interfaces)
 install(TARGETS
   sensor_processor
+  simple_controller
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -186,11 +186,12 @@ def build_graph(graph_builder:StateGraph, tool_node) -> StateGraph:
     build the graph 
     '''
     logger.info("Building graph")
-    graph_builder.add_node("process_user_input", process_input)
-    graph_builder.add_edge(START, "process_user_input")
+    # graph_builder.add_node("process_user_input", process_input)
+    # graph_builder.add_edge(START, "process_user_input")
     
     graph_builder.add_node("Invoke_LLM", LLM_Analyze)
-    graph_builder.add_edge("process_user_input", "Invoke_LLM")
+    graph_builder.add_edge(START, "Invoke_LLM")
+    # graph_builder.add_edge("process_user_input", "Invoke_LLM")
     
     graph_builder.add_node("execute_tools", tool_node)
     graph_builder.add_edge("Invoke_LLM", "execute_tools")
