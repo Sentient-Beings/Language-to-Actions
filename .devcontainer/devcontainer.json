@@ -1,0 +1,51 @@
+{
+    "name": "AgenticWorkflow",
+    "privileged": true,
+    "remoteUser": "ambi",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "../..",
+        "args": {
+            "USERNAME": "ambi"
+        }
+    },
+    "workspaceFolder": "/home/agentic_workflow/mnt/ws",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/home/agentic_workflow/mnt,type=bind,consistency=cached",
+    "customizations": {
+        "vscode": {
+            "extensions":[
+                "ms-vscode.cpptools",
+                "ms-vscode.cpptools-themes",
+                "twxs.cmake",
+                "donjayamanne.python-extension-pack",
+                "eamodio.gitlens",
+                "ms-iot.vscode-ros"
+            ]
+        }
+    },
+    "containerEnv": {
+        "DISPLAY": "${env:DISPLAY}",
+        "NVIDIA_VISIBLE_DEVICES": "all",
+        "NVIDIA_DRIVER_CAPABILITIES": "all",
+        "ROS_DOMAIN_ID": "42"
+    },
+    "runArgs": [
+        "--net=host",
+        "--pid=host",
+        "--ipc=host",
+        "--gpus",
+        "all",
+        "-e", "DISPLAY=${env:DISPLAY}"
+    ],
+    "mounts": [
+       "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
+       "source=/dev/dri,target=/dev/dri,type=bind,consistency=cached"
+       //"source=/dev,target=/dev,type=bind,consistency=cached" //TODO: this is sort of terrible but other options are too complicated for recognizing detached/reattached devices
+    ],
+    "postCreateCommand": "../util/container_scripts/build_install.sh;sudo chown -R $(whoami) /home/agentic_workflow ;echo 'source /home/agentic_workflow/mnt/ws/install/setup.bash;export PATH=$PATH:/home/agentic_workflow/mnt/util/container_scripts/' >> /home/agentic_workflow/.bashrc",
+    //"postCreateCommand": "sudo rosdep update && sudo rosdep install --from-paths src --ignore-src -y && sudo chown -R $(whoami) /home/ws/"
+
+    "otherPortsAttributes": {
+        "onAutoForward": "ignore"
+    }
+}

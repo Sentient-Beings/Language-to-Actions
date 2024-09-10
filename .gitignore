@@ -12,3 +12,4 @@ src/gazebo_ros2_control
 
 # ven
 venv/
+/aws-robomaker-small-house-world/
