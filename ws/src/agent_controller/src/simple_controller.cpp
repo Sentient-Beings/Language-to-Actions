@@ -37,32 +37,39 @@ void SimpleController::process_control_command(const agent_interfaces::msg::Cont
         this->y = 0.0;
         this->z = 0.0;
         this->theta = 0.0;
-        this->publish_control_command();
-        return;
-    }
-    if (command == "forward") {
-        this->forward_speed = 0.5;
-        this->rotation_speed = 0.0;
-        this->x = 1.0;
-        this->y = 0.0;
-        this->z = 0.0;
-        this->theta = 0.0;
-    }
-    else if (command == "left") {
-        this->forward_speed = 0.0;
-        this->rotation_speed = 1.0;
-        this->x = 0.0;
-        this->y = 0.0;
-        this->z = 0.0;
-        this->theta = 1.0;
-    }
-    else if (command == "right") {
-        this->forward_speed = 0.0;
-        this->rotation_speed = 1.0;
-        this->x = 0.0;
-        this->y = 0.0;
-        this->z = 0.0;
-        this->theta = -1.0;
+    } else {
+        if (command == "forward") {
+            this->forward_speed = 0.1;
+            this->rotation_speed = 0.0;
+            this->x = 1.0;
+            this->y = 0.0;
+            this->z = 0.0;
+            this->theta = 0.0;
+        }
+        else if (command == "left") {
+            this->forward_speed = 0.0;
+            this->rotation_speed = 0.1;
+            this->x = 0.0;
+            this->y = 0.0;
+            this->z = 0.0;
+            this->theta = 1.0;
+        }
+        else if (command == "right") {
+            this->forward_speed = 0.0;
+            this->rotation_speed = 0.1;
+            this->x = 0.0;
+            this->y = 0.0;
+            this->z = 0.0;
+            this->theta = -1.0;
+        }
+        else if (command == "stop") {
+            this->forward_speed = 0.0;
+            this->rotation_speed = 0.0;
+            this->x = 0.0;
+            this->y = 0.0;
+            this->z = 0.0;
+            this->theta = 0.0;
+        }
     }
 }
 
