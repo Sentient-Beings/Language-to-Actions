@@ -1,231 +1,338 @@
-import os
-from dotenv import load_dotenv
-from langgraph.graph import StateGraph, START, END
-from typing import Annotated, Sequence , Dict , List  ,Callable
+from time import sleep
+import time
 from typing_extensions import TypedDict
-from langchain.tools import BaseTool, StructuredTool, tool
-from langchain_core.messages import HumanMessage, ToolMessage , SystemMessage , BaseMessage , AIMessage
+from langgraph.graph import StateGraph, START, END
+# from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 from IPython.display import Image, display
-from langchain.tools import Tool
-from langchain_groq import ChatGroq
-from typing import Optional, Type
-from pydantic import BaseModel
+from langgraph.graph import MessagesState
+from langgraph.graph.message import add_messages
+from operator import add
+from langchain.tools import BaseTool, StructuredTool, tool
+from pydantic import BaseModel , Field 
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage , AnyMessage , BaseMessage , RemoveMessage
+from uuid import uuid4
+from typing import Literal, Dict, Any , Annotated , Optional, Type , Sequence , Callable
+# from .agent import Agent_control
+from . import agent
+import asyncio
+import json 
+import random
+import getpass
+import os
 import logging
 
+# GLOBAL VARIABLES 
+_cached_graph = None
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
+LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT")
 if not GROQ_API_KEY:
+    raise ValueError("GROQ_API_KEY environment variable is not set")
+if not OPENAI_API_KEY:
     raise ValueError("GROQ_API_KEY environment variable is not set")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+# Setup the Lidar Retrieval 
+SensorDataGetter = Callable[[], Dict[str, float]]
+_get_sensor_data: SensorDataGetter = lambda: {}
+# Get the user input
+UserInputGetter = Callable[[], str]
+_get_user_input: UserInputGetter = lambda: ""
+# define the control command
+control_command = "stop"
 
-class State(TypedDict):
+#Define the State Blueprint 
+class OverallState(TypedDict):
     """
     This state of the agent should be updated as we receive input from the user or sensor data.
     """
     user_input: str
-    sensor_data: dict[str, float]
-    response: Sequence[BaseMessage]
-    tool_output: dict[str, float]
-    final_answer: Optional[str]
+    # messages: Annotated[list[dict], add]
+    lidar_data_history: Annotated[list[AnyMessage], add_messages]
+    last_control_output: Annotated[list[AnyMessage], add_messages]
+    pending_tool_calls: list[str]
+    execution_summary: Optional[str]
+    execution_ended: bool
+    iterations: int
 
-def process_input(state: State) -> State:
+class User_Input_Retrieval():
     '''
-    process the input from the user
+    encapsulate the sensor data retrieval logic
+    '''     
+    def setter_user_input(getter: SensorDataGetter):
+        global _get_user_input
+        _get_user_input = getter
+        
+    def get_user_input(query: str = "") -> Dict[str, float]:
+        data = _get_user_input()
+        return data
+class Lidar_retrieval():
     '''
-    logger.info(f"Processing user input: {state['user_input']}")
-    state['user_input'] = state['user_input']
+    encapsulate the sensor data retrieval logic
+    '''     
+    def setter_sensor_data(getter: SensorDataGetter):
+        '''
+        this function replaces the placeholder with the actual sensor data getter that matches the actual implementation
+        It is updated in the agent.py file
+        '''
+        global _get_sensor_data
+        _get_sensor_data = getter
+        
+    def get_sensor_data(query: str = "") -> Dict[str, float]:
+        '''
+        a wrapper around the actual sensor data getter
+        '''
+        data = _get_sensor_data()
+        return data
+# Graph node : Request Sensor Data
+def update_sensor_data(state: OverallState) -> OverallState:
+    sensor_data = ToolMessage(content=str(Lidar_retrieval.get_sensor_data()), name= "Lidar Sensor Data", tool_call_id=str(uuid4()))
+    state['lidar_data_history'] = sensor_data
     return state
 
-class GetSensorDataInput(BaseModel):
-    query: str = ""
+# Graph Node: Trim the Lidar Sensor to only keep the last two sensor data
+def trim_sensor_data(state: OverallState) -> OverallState:
+    if len(state['lidar_data_history']) >2:
+        delete_some_sensor_data = [RemoveMessage(id=m.id) for m in state['lidar_data_history'][:-2]]
+        state['lidar_data_history'] = delete_some_sensor_data
+    return state
 
-# this is a placeholder for the sensor data getter 
-SensorDataGetter = Callable[[], Dict[str, float]]
-_get_sensor_data: SensorDataGetter = lambda: {}
+# Graph node to trim the control data to only keep the last two control data
+def trim_control_data(state: OverallState) -> OverallState:
+    if len(state['last_control_output']) > 3:
+        delete_some_control_data = [RemoveMessage(id=m.id) for m in state['last_control_output'][:-3]]
+        state['last_control_output'] = delete_some_control_data
+    return state
 
-def set_sensor_data_getter(getter: SensorDataGetter):
-    '''
-    this function replaces the placeholder with the actual sensor data getter
-    that matches the actual implementation
-    '''
-    global _get_sensor_data
-    _get_sensor_data = getter
-    logger.info("Sensor data getter has been set")
+def format_lidar_data_history(state: OverallState) -> str:
+    lidar_data_history = state.get('lidar_data_history')
+    formatted_data = []
 
-def get_sensor_data(query: str = "") -> Dict[str, float]:
-    '''
-    a wrapper around the actual sensor data getter
-    '''
-    logger.debug("Retrieving sensor data")
-    data = _get_sensor_data()
-    logger.info(f"Sensor data retrieved: {data}")
-    return data
+    for i, data in enumerate(lidar_data_history):
+        if i == 0:
+            time_label = "Previous (t-1): "
+        else:
+            time_label = "Current (t-0): "
+        
+        formatted_data.append(f"{time_label}{data.content}")
 
-sensor_data_tool = Tool(
-    name="lidar_sensor_data",
-    func=get_sensor_data,
-    description="Obtains the sensor data, essential before making any decisions regarding the user's input. This tool does not require any specific input.",
-    args_schema=GetSensorDataInput
+    return "\n".join(formatted_data)
+
+def format_control_actions_history(state: OverallState) -> str:
+    last_control_output = state.get('last_control_output')
+    formatted_data = []
+
+    for i, data in enumerate(last_control_output):
+        if i == 0:
+            time_label = " Command Before Last: "
+        elif i == 1:
+            time_label = " Last Command: "
+        else:
+            time_label = " Current Command: "
+        
+        formatted_data.append(f"{time_label}{data.content}")
+
+    return "\n".join(formatted_data)
+
+# TOOL 1 : Robot Control Tool
+class SendControlCommands(BaseModel):
+    '''
+    Arg Schema for the controller tool that interprets the high level control commands and send the commands to a low level controller
+    '''
+    query: str = Field(default="stop", description="the input should be the direction in which you want the robot to move into") 
+
+def high_level_control()-> str:
+    return control_command
+
+async def a_high_level_control(direction:str)-> str:
+    agent.Agent_control.getter_high_level_command(direction)
+    return f"Moving the robot in the {direction} direction"
+
+def send_control_commands(query: str) -> str:
+    global control_command
+    control_command = query
+    agent.Agent_control.getter_high_level_command(high_level_control)
+    return f"Moving the robot in the {query} direction"
+
+async def asend_control_commands(query: str) -> str:
+    response = await a_high_level_control(query)
+    return response
+    
+robot_control_tool = StructuredTool.from_function(
+    name="send_control_commands",
+    func=send_control_commands,
+    description="Use this tool to send the movement commands to the robot, the movement commands can only be forward, left, right or stop",
+    args_schema= SendControlCommands,
+    coroutine= asend_control_commands
+)
+# TOOL 2 : End Execution Tool
+class EndExecution(BaseModel):
+    '''
+    No arguments are needed to call the End Execution tool. This tool stops the movement of the robot. 
+    '''
+    query: str = Field(default="", description="No arguments need to be provided to execute this Tool") 
+
+def end_execution(query: str) -> str:
+    response = high_level_control("stop")
+    return response
+    
+end_exec_tool = StructuredTool.from_function(
+    name="end_execution",
+    func=end_execution,
+    description="Use this tool to end the execution of the robot",
+    args_schema= EndExecution,
 )
 
-def setup_tools():
-    return BasicToolNode([sensor_data_tool])
-
-def define_model() -> Type[ChatGroq]:
+def define_model_with_tools() -> Type[ChatOpenAI]:
     '''
-    define the model with the tools that are required
-    For now, we only need the GetSensorDataTool
+        define the model with the tools that are required
+        we have lidar sensor and robot control tool 
     '''
-    logger.info("Defining ChatGroq model with tools")
-    model = ChatGroq(model="llama3-70b-8192", temperature=0, api_key=GROQ_API_KEY)
-    model_with_tools = model.bind_tools([sensor_data_tool])
+    model = ChatOpenAI(model="gpt-4o")
+                       
+    # model = ChatGroq(
+    #     model="llama3-70b-8192",
+    #     temperature=0,
+    #     max_tokens=1000,
+    #     request_timeout=60
+    # )
+    model_with_tools = model.bind_tools([robot_control_tool, end_exec_tool])
     return model_with_tools
 
-def LLM_Analyze(state: Dict) -> Dict:
-    logger.info("Starting LLM analysis")
-    model_with_tools = define_model()
-    messages = [
-        SystemMessage(content="""You are an AI assistant that can use tools to gather information. 
-        When you need to get sensor data, use the get_sensor_data tool. 
-        This tool doesn't require any input, so you can call it with an empty string.
-        Always use the tool when asked about sensor data."""),
-        HumanMessage(content=state['user_input'])
-    ]
-    response = model_with_tools.invoke(messages)
-    state['response'] = [response]
-    logger.info("LLM analysis completed")
-    return state
 
-class BasicToolNode:
-    '''
-    This class actually executes the tool and returns the output
-    '''
-    def __init__(self, tools: List[Tool]) -> None:
-        '''
-        map the tool name to the tool object
-        '''
-        self.tools_by_name = {tool.name: tool for tool in tools}
-        logger.info(f"BasicToolNode initialized with tools: {list(self.tools_by_name.keys())}")
-
-    def __call__(self, state: Dict) -> Dict:
-        '''
-        execute the tools and update the state
-        '''
-        logger.info("Executing tools")
-        messages = state.get('response', [])
-        if not messages or not isinstance(messages[-1], AIMessage):
-            logger.warning("No AI message found in state")
-            return state
-
-        ai_message = messages[-1]
-        tool_calls = ai_message.additional_kwargs.get('tool_calls', [])
-        '''
-        iterate over the tool calls and execute the tools
-        For each tool call:
+def brain(state: OverallState) -> OverallState:
+    model_with_tools = define_model_with_tools()
+    
+    ## GUARD RAILS for Sensor
+    if len(state.get('lidar_data_history')) == 0:
+        sensor_info = "We donot have any sensor data ! Be Cautious and do not move"
+    else:
+        sensor_info = "This is the history of lidar data, take this into account for making control decison "
         
-        (1) finds the corresponding tool by name.
-        (2) Executes the tool (in this case, always with an empty query).
-        (3) Creates a ToolMessage with the tool's output.
-        (4) Adds the tool output to the state and appends the ToolMessage to the response.
-        '''
-        for tool_call in tool_calls:
-            tool_name = tool_call.get('function', {}).get('name')
-            if tool_name not in self.tools_by_name:
-                logger.warning(f"Tool {tool_name} not found")
-                continue
-
-            tool = self.tools_by_name[tool_name]
-            
-            try:
-                logger.info(f"Invoking tool: {tool_name}")
-                tool_output = tool.invoke({"query": ""})
-                tool_message = ToolMessage(
-                    content=str(tool_output),
-                    tool_call_id=tool_call.get('id', '')
-                )
-                state['tool_output'] = tool_message
-                state['response'].append(tool_message)
-                logger.info(f"Tool {tool_name} executed successfully")
-            except Exception as e:
-                logger.error(f"Error executing tool {tool_name}: {str(e)}")
-                state['error'] = f"Error executing tool {tool_name}: {str(e)}"
-
-        return state
-
-def final_response(state: Dict) -> Dict:
-    logger.info("Generating final response")
+    ## GUARD RAILS for Controller
+    if state.get('last_control_output'):
+        try:
+            formatted_control_actions = format_control_actions_history(state)
+            control_info = f"These are the last two control commands that you sent to the robot: {formatted_control_actions}"
+        except Exception as e:
+            control_info = "Error reading last control output. Send STOP COMMAND !"
+    else:
+        control_info = "There are no running control commands, we havent send any control commands, analyze the lidar data to decide what control commands you must send"
     
-    # Create a new ChatGroq instance without tools
-    model_without_tools = ChatGroq(
-        model="llama3-70b-8192",
-        temperature=0,
-        max_tokens=1000,
-        request_timeout=60,
-        api_key=GROQ_API_KEY
-    )
-    
-    # Extract the tool output from the state
-    tool_output = next((msg.content for msg in state['response'] if isinstance(msg, ToolMessage)), "No sensor data available")
-    
+    lidar_data_history = format_lidar_data_history(state)
+    # print(lidar_data_history)
     messages = [
-        SystemMessage(content=f"""You are an AI assistant tasked with interpreting sensor data. 
-        The user's question is: "{state['user_input']}"
-        You have received sensor data and need to provide a concise answer based on this data.
-        Use only the provided sensor data to answer the question."""),
-        HumanMessage(content=f"The sensor readings are: {tool_output}")
+        SystemMessage(content="""You are an AI Agent controlling a robot. 
+
+        1. Analyze the lidar sensor readings which give the distance to obstacle in each direction, just try to avoid getting too close to an obstacle or hitting the obstacle. By too close i mean less than 0.5 meters.
+        2. Be curious and move around, try to cover as much area as possible.
+        3. you are given an history of commands that were sent to the robot. Do not change direction too frequently, try to maintain a smooth movement.
+        4. It is okay to send the same command consecutively , if you think that is the right direction to move in.
+        
+        Also, if you observe from the lidar data that there is an obstacle too close to robot, then you should send the stop command to the robot.
+        """),
+        SystemMessage(content=f"{sensor_info}: {lidar_data_history}"),
+        SystemMessage(content=f"{control_info}"),
+        HumanMessage(content=f"User has asked to : {state['user_input']}")
     ]
     
-    response = model_without_tools.invoke(messages)
-    state['response'].append(response)
-    state['final_answer'] = response.content
-    logger.info(f"Generated final answer: {state['final_answer']}")
+    response = model_with_tools.invoke(messages)
+
+    state['messages'] = [{"AI": AIMessage(content=response.content)}]
+    # print(response.tool_calls)
+    state['pending_tool_calls'] = response.tool_calls if isinstance(response.tool_calls, list) else [response.tool_calls]
+    
     return state
 
-def build_graph(graph_builder:StateGraph, tool_node) -> StateGraph:
+# execute the tools 
+def execute_tools(state: OverallState) -> OverallState:
+    state['iterations'] += 1
+    tool_calls = state["pending_tool_calls"]
+    for tool_call in tool_calls:
+        if isinstance(tool_call, dict):
+            if tool_call["name"].lower() == "send_control_commands":
+                result = robot_control_tool.invoke(tool_call["args"])
+                state["last_control_output"] = [result]
+                # state["messages"].append({"Robot Controller Tool": result})
+            elif tool_call["name"].lower() == "end_execution":
+                output = end_exec_tool.invoke(tool_call["args"])
+                # state["messages"].append({"end execution tool": output})
+                state["execution_ended"] = True
+    return state
+
+def pause(state: OverallState) -> OverallState:
+    # sleep for 3 seconds, to prevent the excessive API calls to the model
+    sleep(2) 
+    return state
+
+def router(state: OverallState) -> Literal["END", "buffer"]:
+    user_input = User_Input_Retrieval.get_user_input()
+    print(f"In graph router, user input is: {user_input}")
+    if state["execution_ended"]:
+        return "END"
+    if state['iterations'] == 3:
+        return "END"
+    if user_input.lower() == "stop":
+        return "END"
+    else:
+        return "buffer"
+    
+    
+def build_graph(graph_builder:StateGraph) -> StateGraph:
     '''
     build the graph 
     '''
-    logger.info("Building graph")
-    # graph_builder.add_node("process_user_input", process_input)
-    # graph_builder.add_edge(START, "process_user_input")
-    
-    graph_builder.add_node("Invoke_LLM", LLM_Analyze)
-    graph_builder.add_edge(START, "Invoke_LLM")
-    # graph_builder.add_edge("process_user_input", "Invoke_LLM")
-    
-    graph_builder.add_node("execute_tools", tool_node)
-    graph_builder.add_edge("Invoke_LLM", "execute_tools")
-    
-    graph_builder.add_node("final_response", final_response)
-    graph_builder.add_edge("execute_tools", "final_response")
-    
-    graph_builder.add_edge("final_response", END)
-    graph = graph_builder.compile()
-    logger.info("Graph built and compiled")
-    return graph
 
-_cached_graph = None
+    graph_builder.add_node("Lidar", update_sensor_data)
+    graph_builder.add_node("Trim_lidar_history", trim_sensor_data)
+    graph_builder.add_node("Trim_control_history", trim_control_data)
+    graph_builder.add_node("brain", brain)
+    
+    graph_builder.add_edge(START, "Lidar")
+    graph_builder.add_edge("Lidar", "Trim_lidar_history")
+    graph_builder.add_edge("Trim_lidar_history", "Trim_control_history")
+    graph_builder.add_edge("Trim_control_history", "brain")
+    
+    graph_builder.add_node("Controller", execute_tools)
+    graph_builder.add_edge("brain", "Controller")
+    
+    graph_builder.add_node("buffer", pause)
+    graph_builder.add_edge("buffer", "Lidar")
+
+    # graph_builder.add_node("termination", termination)
+    # graph_builder.add_edge("termination", END)
+
+    graph_builder.add_conditional_edges(
+        "Controller",
+        router,
+        {"END": END, "buffer": "buffer"}
+    )
+    
+    graph_builder.set_entry_point("Lidar")
+    graph = graph_builder.compile()
+    return graph
 
 def setup_graph():
     global _cached_graph
     if _cached_graph is None:
-        logger.info("Setting up graph")
-        graph_builder = StateGraph(State)
-        tool_node = setup_tools()
-        _cached_graph = build_graph(graph_builder, tool_node)
-        logger.info("Graph setup completed")
+        graph_builder = StateGraph(OverallState)
+        _cached_graph = build_graph(graph_builder)
     return _cached_graph
 
-def run_graph(user_message: str):
-    logger.info(f"Running graph with user message: {user_message}")
-    initial_state = {
+def run_graph(user_message: str) -> Dict[str, Any]:
+    initial_state = OverallState({
         "user_input": user_message,
-        "sensor_data": {}, 
-        "response": [],  
-        "tool_output": {},
-        "final_answer": None
-    }
+        "messages": [],
+        "lidar_data_history": [], 
+        "last_control_output": [],  
+        "pending_tool_calls": [],
+        "execution_summary": "",
+        "execution_ended": False,
+        "iterations" : 0,
+    })
     graph = setup_graph()
-    result = graph.invoke(initial_state)
-    logger.info("Graph execution completed")
-    return result
+    actions = graph.invoke(initial_state, {"recursion_limit":1000})
+    
+    return actions
