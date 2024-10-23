@@ -7,8 +7,7 @@
 SimpleController::SimpleController()
 : Node("simple_controller_node")
 {
-    // we want the publisher and subscriber to be in different callback groups
-    // to execute in parallel
+    // pub, sub have independent callback groups
     auto sub_callback_group = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
     rclcpp::SubscriptionOptions sub_options;
     sub_options.callback_group = sub_callback_group;
@@ -30,7 +29,7 @@ void SimpleController::process_control_command(const agent_interfaces::msg::Cont
     std::lock_guard<std::mutex> lock(twist_mutex_);
     if (std::find(control_commands.begin(), control_commands.end(), command) == control_commands.end()) {
         RCLCPP_INFO(this->get_logger(), "Invalid command received: %s", command.c_str());
-        // we just stop the robot
+        // invalid command, stop the robot
         this->forward_speed = 0.0;
         this->rotation_speed = 0.0;
         this->x = 0.0;
