@@ -24,8 +24,8 @@ _cached_graph = None
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
-LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT")
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_PROJECT"] = "language-to-action"
+os.environ["LANGSMITH_TRACING"] = "true"
 
 ## ERROR HANDLING ##
 if not GROQ_API_KEY:
@@ -68,7 +68,7 @@ class Observation_Retrieval():
         global _get_observation_data
         _get_observation_data = getter
         
-    def get_observation_data(query: str = "") -> Dict[str, float]:
+    def get_observation_data(query: str = "") -> str:
         '''
         A wrapper around the actual observation data getter
         '''
@@ -184,12 +184,12 @@ def high_level_control()-> str:
     '''
     return control_command
 
-def send_control_commands(query: str) -> str:
+def send_control_commands(command: str) -> str:
     """Send the control Command to the robot"""
     global control_command 
-    control_command = query
+    control_command = command
     agent.Agent_control.getter_high_level_command(high_level_control)
-    return f"Moving the robot in the {query} direction"
+    return f"Moving the robot in the {command} direction"
     
 robot_control_tool = StructuredTool.from_function(
     name="send_control_commands",
@@ -200,7 +200,7 @@ robot_control_tool = StructuredTool.from_function(
 # TOOL 2 : End Execution Tool
 class EndExecution(BaseModel):
     """No arguments are needed to call the End Execution tool. This tool stops the movement of the robot."""
-    command: str = Field(default="", description="No arguments need to be provided to execute this Tool")
+    pass
 
 def end_execution(command: str) -> str:
     """This stops the robot from moving any furthur"""
@@ -277,8 +277,13 @@ def brain(state: OverallState) -> OverallState:
             COMMAND = "forward"
         """),
         HumanMessage(content=f"Mission Objective: {state['user_input']}"),
-        HumanMessage(content=f"Environmental Data: {observation_info}\nDetails: {observation_history}"),
-        ToolMessage(content=f"Control History: {control_info}", tool_call_id=str(uuid4()))
+        HumanMessage(content=f"""Mission Objective: {state['user_input']}
+                     
+        Environmental Data: {observation_info}
+        
+        Details: {observation_history}
+
+        Control History: {control_info}""")
     ]
 
     response = model_with_tools.invoke(messages)
