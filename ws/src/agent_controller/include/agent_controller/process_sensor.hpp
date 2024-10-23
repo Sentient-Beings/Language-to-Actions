@@ -20,9 +20,9 @@ class ProcessSensor : public rclcpp::Node
             const std::shared_ptr<agent_interfaces::srv::GetSensorDistances::Request> request,
             std::shared_ptr<agent_interfaces::srv::GetSensorDistances::Response> response);
         
-        double min_distance_right;
-        double min_distance_left;
-        double min_distance_front;
+        double min_distance_front_right;
+        double min_distance_front_left;
+        double min_distance_front;  
         bool is_initialized;
     private:
         rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr subscription_;

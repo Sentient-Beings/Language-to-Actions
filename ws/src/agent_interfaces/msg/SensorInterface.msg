@@ -1,3 +1,3 @@
-float32 min_distance_right
-float32 min_distance_left
+float32 min_distance_front_right
+float32 min_distance_front_left
 float32 min_distance_front  

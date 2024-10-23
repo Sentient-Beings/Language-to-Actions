@@ -32,30 +32,30 @@ void ProcessSensor::process_sensor_data(const sensor_msgs::msg::LaserScan::Share
     double angle_increment = msg->angle_increment;
     const std::vector<float>& ranges = msg->ranges;
 
-    // Right side of the robot (-2.356 to -0.785)
-    int min_index_right = static_cast<int>((-2.356 - min_angle) / angle_increment);
-    int max_index_right = static_cast<int>((-0.785 - min_angle) / angle_increment);
+    // front right side of the robot (-90 to -30 degrees)
+    int min_index_front_right = static_cast<int>((-M_PI_2 - min_angle) / angle_increment);
+    int max_index_front_right = static_cast<int>((-M_PI / 6 - min_angle) / angle_increment);
 
-    // Front side of the robot (-0.785 to 0.785)
-    int min_index_front = static_cast<int>((-0.785 - min_angle) / angle_increment);
-    int max_index_front = static_cast<int>((0.785 - min_angle) / angle_increment);
+    // front side of the robot (-30 to 30 degrees)
+    int min_index_front = static_cast<int>((-M_PI / 6 - min_angle) / angle_increment);
+    int max_index_front = static_cast<int>((M_PI / 6 - min_angle) / angle_increment);
 
-    // Left side of the robot (0.785 to 2.356)
-    int min_index_left = static_cast<int>((0.785 - min_angle) / angle_increment);
-    int max_index_left = static_cast<int>((2.356 - min_angle) / angle_increment);
+    // front left side of the robot (30 to 90 degrees)
+    int min_index_front_left = static_cast<int>((M_PI / 6 - min_angle) / angle_increment);
+    int max_index_front_left = static_cast<int>((M_PI_2 - min_angle) / angle_increment);
 
-    // Now computing the mean distance for each side of the robot
-    this->min_distance_right = calculate_min(std::vector<float>(ranges.begin() + min_index_right, ranges.begin() + max_index_right));
-    this->min_distance_left =  calculate_min(std::vector<float>(ranges.begin() + min_index_left, ranges.begin() + max_index_left));
+    // Now computing the minimum distance for each side of the robot
+    this->min_distance_front_right = calculate_min(std::vector<float>(ranges.begin() + min_index_front_right, ranges.begin() + max_index_front_right));
+    this->min_distance_front_left = calculate_min(std::vector<float>(ranges.begin() + min_index_front_left, ranges.begin() + max_index_front_left));
     this->min_distance_front = calculate_min(std::vector<float>(ranges.begin() + min_index_front, ranges.begin() + max_index_front));
 
     is_initialized = true;
     auto message = agent_interfaces::msg::SensorInterface();
-    message.min_distance_right = min_distance_right;
-    message.min_distance_left = min_distance_left;
+    message.min_distance_front_right = min_distance_front_right;
+    message.min_distance_front_left = min_distance_front_left;
     message.min_distance_front = min_distance_front;
 
-    // RCLCPP_INFO(this->get_logger(), "Right: %f, Front: %f, Left: %f", min_distance_right, min_distance_front, min_distance_left);
+    // RCLCPP_INFO(this->get_logger(), "Front Right: %f, Front: %f, Front Left: %f", min_distance_front_right, min_distance_front, min_distance_front_left);
     publisher_->publish(message);
 }
 
@@ -68,8 +68,8 @@ void ProcessSensor::process_sensor_data_service(
         RCLCPP_ERROR(this->get_logger(), "Sensor data is not initialized.");
         return;
     }
-    response->min_distance_right = this->min_distance_right;
-    response->min_distance_left = this->min_distance_left;
+    response->min_distance_front_right = this->min_distance_front_right;
+    response->min_distance_front_left = this->min_distance_front_left;
     response->min_distance_front = this->min_distance_front;
     RCLCPP_INFO(this->get_logger(), "Response sent.");
 }

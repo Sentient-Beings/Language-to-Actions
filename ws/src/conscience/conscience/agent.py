@@ -9,6 +9,7 @@ from std_msgs.msg import String
 from . import graph_util
 import time
 from typing import Callable
+
 # Setup the Control Interface: This is a high-level control which will be filled by the Agent
 High_level_control = Callable[[], str]
 _high_level_control: High_level_control = lambda: ""
@@ -19,6 +20,7 @@ class Agent_control:
     def get_high_level_command():
         command = _high_level_control()
         return command
+    
 ####################################################################################################################
 ############################################## ROS2 COMM Class #####################################################
 ####################################################################################################################
