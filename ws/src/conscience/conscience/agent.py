@@ -5,12 +5,13 @@ from agent_interfaces.msg import ControllerInterface
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from std_msgs.msg import String
-# from .graph_util import run_graph , Lidar_retrieval
+from groq import Groq
+import base64
 from . import graph_util
 import time
 from typing import Callable
 
-# Setup the Control Interface: This is a high-level control which will be filled by the Agent
+"""Setup the Control Interface: This is a high-level control which will be filled by the Agent"""
 High_level_control = Callable[[], str]
 _high_level_control: High_level_control = lambda: ""
 class Agent_control:
@@ -21,29 +22,30 @@ class Agent_control:
         command = _high_level_control()
         return command
     
-####################################################################################################################
-############################################## ROS2 COMM Class #####################################################
-####################################################################################################################
 class Agent(Node): 
+    """ROS comm"""
     def __init__(self): 
         super().__init__('agent')
         self.declare_parameter('user_input', '')
         user_callback_group = MutuallyExclusiveCallbackGroup()
         sensor_callback_group = MutuallyExclusiveCallbackGroup()
+        
         self.create_subscription(String, 'user_input', self.user_input_callback, 10, callback_group=user_callback_group)
+        self.user_input = ""
+        
         self.controller_interface_publisher_ = self.create_publisher(ControllerInterface, 'controller_interface', 10)
         self.create_timer(1, self.publish_high_level_command)
         
         self.sensor_client_ = self.create_client(GetSensorDistances, 'get_saftey_distance', callback_group=sensor_callback_group)
         self.lidar_sensor_reading = {}
         self.sensor_response = None 
-        self.user_input = ""
+        
+        
+        self.client = Groq()
         self.get_logger().info('Agent initialized')
     
     def get_minimum_distance(self, request):
-        '''
-        Description: Sends a request to the sensor service to get the data
-        '''
+        """Sends a request to the sensor service to get the data"""
         self.get_logger().info('Requesting minimum distance from sensor')
         while not self.sensor_client_.wait_for_service(timeout_sec=1.0):
             self.get_logger().warn('Service not available, waiting again...')
