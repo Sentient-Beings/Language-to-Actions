@@ -22,7 +22,7 @@ class SimpleController : public rclcpp::Node
         rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr controller_command_publisher_;
         rclcpp::TimerBase::SharedPtr timer_;
 
-        std::vector<std::string> control_commands = {"forward", "left", "right", "stop"};
+        std::vector<std::string> control_commands = {"forward", "left", "right", "stop", "reverse"};
         double forward_speed = 0.0;
         double rotation_speed = 0.0;
         double x , y , z , theta = 0.0;

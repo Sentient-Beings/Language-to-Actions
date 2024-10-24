@@ -88,7 +88,7 @@ def define_model_with_tools() -> Type[ChatOpenAI]:
     #     request_timeout=60
     # )
     
-    model_with_tools = model.bind_tools([robot_control_tool, end_exec_tool])
+    model_with_tools = model.bind_tools([robot_control_tool])
     return model_with_tools
 
 # Graph State
@@ -97,9 +97,9 @@ class OverallState(TypedDict):
     State of the agent
     """
     user_input: str
-    observation: Annotated[list[AnyMessage], add_messages]
+    observation: Optional[AnyMessage]
     previous_control_commands: Annotated[list[AnyMessage], add_messages]
-    previous_decision_output: Annotated[list[AnyMessage], add_messages]
+    previous_decision_output: Optional[AnyMessage]
     pending_tool_calls: list[str]
     execution_data_summary: Optional[str]
     execution_ended: bool
@@ -115,25 +115,25 @@ def get_observation(state: OverallState) -> OverallState:
     return state
 
 # Graph Node
-def trim_observation(state: OverallState) -> OverallState:
-    '''
-    We dont have to store an exhaustive memory of the observation last two
-    should be enough to reason about the next action
-    '''
-    if len(state['observation']) > 2:
-        prune_observation = [RemoveMessage(id=m.id) for m in state['observation'][:-2]]
-        state['observation'] = prune_observation
-    return state
+# def trim_observation(state: OverallState) -> OverallState:
+#     '''
+#     We dont have to store an exhaustive memory of the observation last two
+#     should be enough to reason about the next action
+#     '''
+#     if len(state['observation']) > 2:
+#         prune_observation = [RemoveMessage(id=m.id) for m in state['observation'][:-2]]
+#         state['observation'] = prune_observation
+#     return state
 # Graph Node
-def trim_decision_output(state: OverallState) -> OverallState:
-    '''
-    We also store the last two decision outputs, just to imporve the LLMS's
-    planning and reasoning
-    '''
-    if len(state['previous_decision_output']) > 2:
-        prune_decision_output = [RemoveMessage(id=m.id) for m in state['previous_decision_output'][:-2]]
-        state['previous_decision_output'] = prune_decision_output
-    return state
+# def trim_decision_output(state: OverallState) -> OverallState:
+#     '''
+#     We also store the last two decision outputs, just to imporve the LLMS's
+#     planning and reasoning
+#     '''
+#     if len(state['previous_decision_output']) > 2:
+#         prune_decision_output = [RemoveMessage(id=m.id) for m in state['previous_decision_output'][:-2]]
+#         state['previous_decision_output'] = prune_decision_output
+#     return state
 
 # Graph node
 def trim_control_data(state: OverallState) -> OverallState:
@@ -146,23 +146,23 @@ def trim_control_data(state: OverallState) -> OverallState:
         state['previous_control_commands'] = prune_control_commands
     return state
 
-def format_observation_history(state: OverallState) -> str:
-    """
-    Format the observation data for clarity.
-    This is done to improve the LLM's reasoning output
-    """
-    observation_history = state.get('observation')
-    formatted_observation = []
+# def format_observation_history(state: OverallState) -> str:
+#     """
+#     Format the observation data for clarity.
+#     This is done to improve the LLM's reasoning output
+#     """
+#     observation_history = state.get('observation')
+#     formatted_observation = []
 
-    for i, data in enumerate(observation_history):
-        if i == 0:
-            time_label = "Previous (t-1): "
-        else:
-            time_label = "Current (t-0): "
+#     for i, data in enumerate(observation_history):
+#         if i == 0:
+#             time_label = "Previous (t-1): "
+#         else:
+#             time_label = "Current (t-0): "
 
-        formatted_observation.append(f"{time_label}{data.content}")
+#         formatted_observation.append(f"{time_label}{data.content}")
 
-    return "\n".join(formatted_observation)
+#     return "\n".join(formatted_observation)
 
 def format_control_actions_history(state: OverallState) -> str:
     """
@@ -174,27 +174,27 @@ def format_control_actions_history(state: OverallState) -> str:
 
     for i, data in enumerate(control_history):
         if i == 0:
-            time_label = "Last Executed Control Command: "
+            time_label = "Control at t-1: "
         else:
-            time_label = "Currently Executing Control Command: "
+            time_label = "Control at t-0: "
 
         formatted_control_data.append(f"{time_label}{data.content}")
 
     return "\n".join(formatted_control_data)
 
-def format_decision_output(state: OverallState) -> str:
-    '''
-    Formats the last two decision outputs for clarity
-    '''
-    decision_output = state.get('previous_decision_output')
-    formatted_decision_output = []
-    for i, data in enumerate(decision_output):
-        if i == 0:
-            time_label = "Decision Output at t-1: "
-        else:
-            time_label = "Decision Output at t-0: "
-        formatted_decision_output.append(f"{time_label}{data.content}")
-    return "\n".join(formatted_decision_output)
+# def format_decision_output(state: OverallState) -> str:
+#     '''
+#     Formats the last two decision outputs for clarity
+#     '''
+#     decision_output = state.get('previous_decision_output')
+#     formatted_decision_output = []
+#     for i, data in enumerate(decision_output):
+#         if i == 0:
+#             time_label = "Decision Taken at t-1: "
+#         else:
+#             time_label = "Decision Taken at t-0: "
+#         formatted_decision_output.append(f"{time_label}{data.content}")
+#     return "\n".join(formatted_decision_output)
 
 # TOOL 1 : Robot Control Tool
 class SendControlCommands(BaseModel):
@@ -214,32 +214,35 @@ def send_control_commands(command: str) -> str:
     global control_command 
     control_command = command
     agent.Agent_control.getter_high_level_command(high_level_control)
-    return f"Moving the robot in the {command} direction"
+    if command == "stop":
+        return "Halted the robot"
+    else:
+        return f"Moving the robot {command}"
     
 robot_control_tool = StructuredTool.from_function(
     name="send_control_commands",
     func=send_control_commands,
-    description="Use this tool to send the control commands to the robot, the control commands can either be forward, left, right or stop",
+    description="Use this tool to send the control commands to the robot, the control commands can either be forward, left, right, reverse or stop",
     args_schema= SendControlCommands
 )
 # TOOL 2 : End Execution Tool
-class EndExecution(BaseModel):
-    """No arguments are needed to call the End Execution tool. This tool stops the movement of the robot."""
-    pass
+# class EndExecution(BaseModel):
+#     """No arguments are needed to call the End Execution tool. This tool stops the movement of the robot."""
+#     pass
 
-def end_execution(command: str) -> str:
-    """This stops the robot from moving any furthur"""
-    global control_command
-    control_command = "stop"
-    agent.Agent_control.getter_high_level_command(high_level_control)
-    return "Execution Ended"
+# def end_execution(command: str) -> str:
+#     """This stops the robot from moving any furthur"""
+#     global control_command
+#     control_command = "stop"
+#     agent.Agent_control.getter_high_level_command(high_level_control)
+#     return "Execution Ended"
     
-end_exec_tool = StructuredTool.from_function(
-    name="end_execution",
-    func=end_execution,
-    description="Use this tool to end the execution of the robot, No input arguments are needed",
-    args_schema= EndExecution,
-)
+# end_exec_tool = StructuredTool.from_function(
+#     name="end_execution",
+#     func=end_execution,
+#     description="Use this tool to end the execution of the robot, No input arguments are needed",
+#     args_schema= EndExecution,
+# )
 
 # Graph Node
 def brain(state: OverallState) -> OverallState:
@@ -247,10 +250,10 @@ def brain(state: OverallState) -> OverallState:
     model_with_tools = define_model_with_tools()
     
     ## GUARD RAILS for Sensor
-    if len(state.get('observation')) == 0:
-        observation_info = "WARNING: No environmental observations available. Safety protocol: Remain stationary."
+    if state.get('observation') is None or state['observation'].content == "":
+        observation_info = "WARNING: No scene observations available. Safety protocol: Remain stationary."
     else:
-        observation_info = "Previous environmental observations for decision making"
+        observation_info = "The scene in front of the robot:"
 
     ## GUARD RAILS for Controller
     if state.get('previous_control_commands'):
@@ -262,9 +265,9 @@ def brain(state: OverallState) -> OverallState:
         control_info = "No previous control commands. Initial movement requires some observation"
 
     ## Format the observation
-    observation_history = format_observation_history(state)
+    # observation_history = format_observation_history(state)
     ## Format the decision output
-    decision_output = format_decision_output(state)
+    # decision_output = format_decision_output(state)
 
     messages = [
         SystemMessage(content="""You are controlling a differential drive robot with the following capabilities:
@@ -294,14 +297,13 @@ def brain(state: OverallState) -> OverallState:
           - Be curious and explore new areas
         """),
         HumanMessage(content=f"""Mission Objective: {state['user_input']}
-                     Environmental Data: {observation_info}
-                     Details: {observation_history}
+                     {observation_info} {state['observation']}
                      Control History: {control_info}
-                     Previous Decisions: {decision_output}""")
+                     Decision History: {state['previous_decision_output']}""")
         ]
 
     response = model_with_tools.invoke(messages)
-    state['previous_decision_output'] = [response.content]
+    state['previous_decision_output'] = [HumanMessage(content=response.content, id=str(uuid4()))]
     state['pending_tool_calls'] = response.tool_calls if isinstance(response.tool_calls, list) else [response.tool_calls]
     return state
 
@@ -314,10 +316,10 @@ def execute_tools(state: OverallState) -> OverallState:
         if isinstance(tool_call, dict):
             if tool_call["name"].lower() == "send_control_commands":
                 result = robot_control_tool.invoke(tool_call["args"])
-                state["previous_control_commands"] = [result]
-            elif tool_call["name"].lower() == "end_execution":
-                output = end_exec_tool.invoke(tool_call["args"])
-                state["execution_ended"] = True
+                state["previous_control_commands"] = [HumanMessage(content=result, id=str(uuid4()))]
+            # elif tool_call["name"].lower() == "end_execution":
+            #     output = end_exec_tool.invoke(tool_call["args"])
+            #     state["execution_ended"] = True
     return state
 
 # Graph Node
@@ -333,8 +335,8 @@ def router(state: OverallState) -> Literal["END", "buffer"]:
     """
     user_input = User_Input_Retrieval.get_user_input()
     
-    if state["execution_ended"]:
-        return "END"
+    # if state["execution_ended"]:
+    #     return "END"
     if state['iterations'] == 50:
         return "END"
     if user_input.lower() == "stop":
@@ -346,16 +348,16 @@ def router(state: OverallState) -> Literal["END", "buffer"]:
 def build_graph(graph_builder:StateGraph) -> StateGraph:
     """This function builds the graph"""
     graph_builder.add_node("Scene observation", get_observation)
-    graph_builder.add_node("Prune Observation History", trim_observation)
+    # graph_builder.add_node("Prune Observation History", trim_observation)
     graph_builder.add_node("Prune Control History", trim_control_data)
-    graph_builder.add_node("Prune Decision Output", trim_decision_output)
+    # graph_builder.add_node("Prune Decision Output", trim_decision_output)
     graph_builder.add_node("brain", brain)
 
     graph_builder.add_edge(START, "Scene observation")
-    graph_builder.add_edge("Scene observation", "Prune Observation History")
-    graph_builder.add_edge("Prune Observation History", "Prune Control History")
-    graph_builder.add_edge("Prune Control History", "Prune Decision Output")
-    graph_builder.add_edge("Prune Decision Output", "brain")
+    # graph_builder.add_edge("Scene observation", "Prune Observation History")
+    graph_builder.add_edge("Scene observation", "Prune Control History")
+    # graph_builder.add_edge("Prune Control History", "Prune Decision Output")
+    graph_builder.add_edge("Prune Control History", "brain")
 
     graph_builder.add_node("Controller", execute_tools)
     graph_builder.add_edge("brain", "Controller")
@@ -388,12 +390,12 @@ def run_graph(user_message: str) -> Dict[str, Any]:
     """This function executes the graph"""
     initial_state = OverallState({
         "user_input": user_message,
-        "observation": [],
+        "observation": None,
         "previous_control_commands": [],
-        "previous_decision_output": [],
+        "previous_decision_output": None,
         "pending_tool_calls": [],
         "execution_data_summary": "",
-        "execution_ended": False,
+        # "execution_ended": False,
         "iterations" : 0
     })
     graph = setup_graph()

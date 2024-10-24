@@ -100,7 +100,7 @@ class Agent(Node):
     def invoke_reasoning(self, user_input: str):
         """Invokes the graph with the user input and also updates the lidar sensor reading"""
         try:
-            graph_util.Observation_Retrieval.setter_observation_data(self.observation)    
+            graph_util.Observation_Retrieval.setter_observation_data(self.analyze_scene)    
             return graph_util.run_graph(user_input)
         except Exception as e:
             self.get_logger().error('Error in invoke_reasoning method: {}'.format(e))
@@ -181,25 +181,18 @@ class Agent(Node):
     def create_prompt(self,lidar_data):
         """Create a structured prompt combining vision and LiDAR data."""
         prompt = f"""Analyze this image from the robot's front-facing camera in accordance with the provided LiDAR data.
-        Return a JSON object describing the scene and distance to the nearest obstacle
 
-        LiDAR readings which provide distances to obstacles near the robot. 
         - Distance to obstacle in front right: {lidar_data['Obstacle in front right']:.2f} meters
         - Distance to obstacle in front left: {lidar_data['Obstacle in front left']:.2f} meters
         - Distance to obstacle in front: {lidar_data['Obstacle in front']:.2f} meters
 
-        You must return a JSON object with this structure:
-        {{
-            "scene_description": {{
-                "description": "describe the scene and provide the name of the obstacles (Dustbin, Chair, Dumbell, table or whatever you see). Do it in a way that helps in planning the motion of the robot and avoid hitting the obstacles",
-                "obstacles": "list the nearest obstacles with their positions and distances from the robot"
-            }}
-        }}
+        Important:
+        - Describe the scene and by also providing the name of the obstacles and their distance from the robot (Dustbin, Chair, Dumbell, table or whatever you see)
+        - Be descriptive
         """
         return prompt
     
     def analyze_scene(self):
-        """Analyze the scene using both vision and LiDAR data with JSON output."""
         try:
             # request the lidar data
             self.send_lidar_request()
@@ -209,7 +202,7 @@ class Agent(Node):
             # Safety check: See if there is no image or lidar data
             if not self.base64_image and not lidar_data:
                 self.get_logger().warn('No scene observation, STOP the robot')
-                return {"error": "No scene observation, STOP the robot"}
+                return "WARNING!: No scene observation, STOP the robot"
             
             prompt = self.create_prompt(lidar_data)
             response = self.client.chat.completions.create(
@@ -227,25 +220,17 @@ class Agent(Node):
                         ],
                     }
                 ],
-                model="llama-3.2-90b-vision-preview",
-                response_format={"type": "json_object"}
+                model="llama-3.2-90b-vision-preview"
             )
-            result = json.loads(response.choices[0].message.content)
+            result = response.choices[0].message.content
             return result
         
-        except json.JSONDecodeError:
-            return {"error": "No scene observation, STOP the robot"}
         except Exception as e:
-            return {"error": f"Error in scene analysis: {str(e)}"}
+            return {"WARNING!: Error in scene analysis: {}".format(e)}
         
-    def observation(self):
-        """Get the scene observation grounded in the real world using lidar data."""
-        output = self.analyze_scene()
-        if "error" in output:
-            return f"WARNING!: {output['error']}"
-        scene_description = output["scene_description"]
-        combined = f" Scene description: {scene_description['description']}. Details about the obstacles: {scene_description['obstacles']}"
-        return combined
+    # def observation(self):
+    #     """Get the scene observation grounded in the real world using lidar data."""
+    #     return self.analyze_scene()
 
 
 def main(args=None):
