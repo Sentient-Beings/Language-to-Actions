@@ -14,6 +14,11 @@ import base64
 from . import graph_util
 import time
 from typing import Callable
+import os
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+if not GROQ_API_KEY:
+    raise ValueError("GROQ_API_KEY environment variable is not set")
 
 """Setup the Control Interface: This is a high-level control which will be filled by the Agent"""
 High_level_control = Callable[[], str]
@@ -114,7 +119,7 @@ class Agent(Node):
     ### LIDAR ###
     def get_minimum_distance(self, request):
         """Sends a request to the sensor service to get the data"""
-        self.get_logger().info('Requesting minimum distance to obstacle from sensor')
+        self.get_logger().debug('Requesting minimum distance to obstacle from sensor')
         
         while not self.sensor_client_.wait_for_service(timeout_sec=1.0):
             self.get_logger().warn('Service not available, waiting again...')
@@ -138,7 +143,6 @@ class Agent(Node):
             self.get_logger().warn('Lidar sensor reading is empty or None')
             # Return an empty dictionary instead of None
             return {}  
-        self.get_logger().debug('Returning lidar sensor reading')
         return self.lidar_sensor_reading
     
     def send_lidar_request(self):
@@ -147,7 +151,8 @@ class Agent(Node):
         # Reset the response
         self.sensor_response = None 
         self.get_minimum_distance(request)
-        self.get_logger().info('Waiting for sensor response')
+        self.get_logger().debug('Waiting for sensor response')
+        
         while self.sensor_response is None:
             # Wait for the sensor response
             time.sleep(0.1) 
@@ -179,43 +184,20 @@ class Agent(Node):
         Return a JSON object describing the scene and distance to the nearest obstacle
 
         LiDAR readings which provide distances to obstacles near the robot. 
-        - Distance to obstacle in front right: {lidar_data['front_right']:.2f} meters
-        - Distance to obstacle in front left: {lidar_data['front_left']:.2f} meters
-        - Distance to obstacle in front: {lidar_data['front']:.2f} meters
+        - Distance to obstacle in front right: {lidar_data['Obstacle in front right']:.2f} meters
+        - Distance to obstacle in front left: {lidar_data['Obstacle in front left']:.2f} meters
+        - Distance to obstacle in front: {lidar_data['Obstacle in front']:.2f} meters
 
         You must return a JSON object with this structure:
         {{
             "scene_description": {{
-                "description": "describe the scene in a way that helps in planning the motion of the robot and avoid hitting the obstacles",
+                "description": "describe the scene and provide the name of the obstacles (Dustbin, Chair, Dumbell, table or whatever you see). Do it in a way that helps in planning the motion of the robot and avoid hitting the obstacles",
                 "obstacles": "list the nearest obstacles with their positions and distances from the robot"
             }}
         }}
-        Following is just an example of a valid JSON output: 
-        Example scenario:
-        Image shows: A room with two cardboard boxes - a red box directly in front and a blue box far away on the right
-        LiDAR readings:
-        - Front right: 5.20 meters
-        - Front left: 4.80 meters
-        - Front: 1.50 meters
-
-        Output:
-        Example response:
-        {{
-            "scene_description": {{
-                "description": "The robot's path is partially blocked by a red cardboard box directly in front. There is more open space on the right side of the room",
-                "obstacles": "Nearest obstacle is a red cardboard box at 1.50 meters directly in front of the robot. Another box visible on the right but at a safe distance of 5.20 meters"
-            }}
-        }}
-
-        Important:
-        - Focus on obstacles that could affect the robot's movement
-        - Use actual distances from the LiDAR data provided
-        - Describe positions of obstacles (front, left, right) relative to the robot
-        - Keep descriptions concise but include critical navigation details
-        - Return valid JSON format only
         """
         return prompt
-        
+    
     def analyze_scene(self):
         """Analyze the scene using both vision and LiDAR data with JSON output."""
         try:
@@ -248,22 +230,19 @@ class Agent(Node):
                 model="llama-3.2-90b-vision-preview",
                 response_format={"type": "json_object"}
             )
-            print(response.choices[0].message.content)
             result = json.loads(response.choices[0].message.content)
             return result
         
-        except json.JSONDecodeError as e:
-            return {"error": f"No scene observation, STOP the robot: {str(e)}"}
+        except json.JSONDecodeError:
+            return {"error": "No scene observation, STOP the robot"}
         except Exception as e:
-            return {"error": f"No scene observation, STOP the robot: {str(e)}"}
+            return {"error": f"Error in scene analysis: {str(e)}"}
         
     def observation(self):
         """Get the scene observation grounded in the real world using lidar data."""
         output = self.analyze_scene()
         if "error" in output:
-            scene_description = output["error"]
-            combined = f"WARNING!: {scene_description}"
-            return combined
+            return f"WARNING!: {output['error']}"
         scene_description = output["scene_description"]
         combined = f" Scene description: {scene_description['description']}. Details about the obstacles: {scene_description['obstacles']}"
         return combined

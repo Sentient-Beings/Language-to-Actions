@@ -38,7 +38,15 @@ void SimpleController::process_control_command(const agent_interfaces::msg::Cont
         this->theta = 0.0;
     } else {
         if (command == "forward") {
-            this->forward_speed = 0.1;
+            this->forward_speed = 0.2;
+            this->rotation_speed = 0.0;
+            this->x = 1.0;
+            this->y = 0.0;
+            this->z = 0.0;
+            this->theta = 0.0;
+        }
+        else if (command == "reverse") {
+            this->forward_speed = -0.2;
             this->rotation_speed = 0.0;
             this->x = 1.0;
             this->y = 0.0;

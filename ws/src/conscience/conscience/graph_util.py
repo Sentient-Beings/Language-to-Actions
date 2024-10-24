@@ -99,6 +99,7 @@ class OverallState(TypedDict):
     user_input: str
     observation: Annotated[list[AnyMessage], add_messages]
     previous_control_commands: Annotated[list[AnyMessage], add_messages]
+    previous_decision_output: Annotated[list[AnyMessage], add_messages]
     pending_tool_calls: list[str]
     execution_data_summary: Optional[str]
     execution_ended: bool
@@ -122,6 +123,16 @@ def trim_observation(state: OverallState) -> OverallState:
     if len(state['observation']) > 2:
         prune_observation = [RemoveMessage(id=m.id) for m in state['observation'][:-2]]
         state['observation'] = prune_observation
+    return state
+# Graph Node
+def trim_decision_output(state: OverallState) -> OverallState:
+    '''
+    We also store the last two decision outputs, just to imporve the LLMS's
+    planning and reasoning
+    '''
+    if len(state['previous_decision_output']) > 2:
+        prune_decision_output = [RemoveMessage(id=m.id) for m in state['previous_decision_output'][:-2]]
+        state['previous_decision_output'] = prune_decision_output
     return state
 
 # Graph node
@@ -170,6 +181,20 @@ def format_control_actions_history(state: OverallState) -> str:
         formatted_control_data.append(f"{time_label}{data.content}")
 
     return "\n".join(formatted_control_data)
+
+def format_decision_output(state: OverallState) -> str:
+    '''
+    Formats the last two decision outputs for clarity
+    '''
+    decision_output = state.get('previous_decision_output')
+    formatted_decision_output = []
+    for i, data in enumerate(decision_output):
+        if i == 0:
+            time_label = "Decision Output at t-1: "
+        else:
+            time_label = "Decision Output at t-0: "
+        formatted_decision_output.append(f"{time_label}{data.content}")
+    return "\n".join(formatted_decision_output)
 
 # TOOL 1 : Robot Control Tool
 class SendControlCommands(BaseModel):
@@ -230,8 +255,7 @@ def brain(state: OverallState) -> OverallState:
     ## GUARD RAILS for Controller
     if state.get('previous_control_commands'):
         try:
-            formatted_control_actions = format_control_actions_history(state)
-            control_info = f"Previous control commands that: {formatted_control_actions}"
+            control_info = format_control_actions_history(state)
         except Exception as e:
             control_info = "ERROR: Control history unavailable. Safety protocol: Issue STOP command."
     else:
@@ -239,6 +263,8 @@ def brain(state: OverallState) -> OverallState:
 
     ## Format the observation
     observation_history = format_observation_history(state)
+    ## Format the decision output
+    decision_output = format_decision_output(state)
 
     messages = [
         SystemMessage(content="""You are controlling a differential drive robot with the following capabilities:
@@ -247,46 +273,35 @@ def brain(state: OverallState) -> OverallState:
         - left: Rotate left
         - right: Rotate right
         - stop: Halt all movement
+        - reverse: Move backward
 
         Decision Making Protocol:
-        1. Safety First:
-          - Maintain minimum 1-meter safety distance from obstacles
-          - If sensor data is missing or corrupt, default to STOP
+        1. Uncertainty Handling:
+          - If scene description is not clear, default to STOP or reverse
           - Avoid rapid direction changes
 
-        2. Environment Analysis:
-          - Process recent observations (obstacles, distances, scene description)
-          - Compare current scene with previous observations
+        2. Planning:
+          - Analyze the scene description and obstacles
+          - Compare current scene with previous observations and decision outputs
           - Identify potential exploration paths
 
         3. Movement Strategy:
-          - Prefer gradual turns over sharp rotations
-          - Maintain consistent movement when safe
-          - Stop if uncertainty about environment
+          - Donot repeat the same decisions too frequently
+          - If unclear about the scene, default to STOP or reverse
 
         4. Exploration Rules:
-          - Avoid revisiting recently explored areas
-          - Prioritize unexplored directions
-        
-        Example Decision Pattern:
-        IF obstacle_distance < 1.5m AND directly_ahead:
-            IF right_clear: COMMAND = "right"
-            ELIF left_clear: COMMAND = "left"
-            ELSE: COMMAND = "stop"
-        ELIF clear_path_ahead:
-            COMMAND = "forward"
+          - Move to open spaces 
+          - Be curious and explore new areas
         """),
-        HumanMessage(content=f"Mission Objective: {state['user_input']}"),
         HumanMessage(content=f"""Mission Objective: {state['user_input']}
-                     
-        Environmental Data: {observation_info}
-        
-        Details: {observation_history}
-
-        Control History: {control_info}""")
-    ]
+                     Environmental Data: {observation_info}
+                     Details: {observation_history}
+                     Control History: {control_info}
+                     Previous Decisions: {decision_output}""")
+        ]
 
     response = model_with_tools.invoke(messages)
+    state['previous_decision_output'] = [response.content]
     state['pending_tool_calls'] = response.tool_calls if isinstance(response.tool_calls, list) else [response.tool_calls]
     return state
 
@@ -299,7 +314,7 @@ def execute_tools(state: OverallState) -> OverallState:
         if isinstance(tool_call, dict):
             if tool_call["name"].lower() == "send_control_commands":
                 result = robot_control_tool.invoke(tool_call["args"])
-                state["last_control_output"] = [result]
+                state["previous_control_commands"] = [result]
             elif tool_call["name"].lower() == "end_execution":
                 output = end_exec_tool.invoke(tool_call["args"])
                 state["execution_ended"] = True
@@ -320,7 +335,7 @@ def router(state: OverallState) -> Literal["END", "buffer"]:
     
     if state["execution_ended"]:
         return "END"
-    if state['iterations'] == 3:
+    if state['iterations'] == 50:
         return "END"
     if user_input.lower() == "stop":
         return "END"
@@ -333,12 +348,14 @@ def build_graph(graph_builder:StateGraph) -> StateGraph:
     graph_builder.add_node("Scene observation", get_observation)
     graph_builder.add_node("Prune Observation History", trim_observation)
     graph_builder.add_node("Prune Control History", trim_control_data)
+    graph_builder.add_node("Prune Decision Output", trim_decision_output)
     graph_builder.add_node("brain", brain)
 
     graph_builder.add_edge(START, "Scene observation")
     graph_builder.add_edge("Scene observation", "Prune Observation History")
     graph_builder.add_edge("Prune Observation History", "Prune Control History")
-    graph_builder.add_edge("Prune Control History", "brain")
+    graph_builder.add_edge("Prune Control History", "Prune Decision Output")
+    graph_builder.add_edge("Prune Decision Output", "brain")
 
     graph_builder.add_node("Controller", execute_tools)
     graph_builder.add_edge("brain", "Controller")
@@ -373,6 +390,7 @@ def run_graph(user_message: str) -> Dict[str, Any]:
         "user_input": user_message,
         "observation": [],
         "previous_control_commands": [],
+        "previous_decision_output": [],
         "pending_tool_calls": [],
         "execution_data_summary": "",
         "execution_ended": False,

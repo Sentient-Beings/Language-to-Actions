@@ -21,6 +21,7 @@ setup(
     entry_points={
         'console_scripts': [
             'agent = conscience.agent:main',
+            'image_server = conscience.image_server:main',
         ],
     },
 )
