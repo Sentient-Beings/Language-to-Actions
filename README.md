@@ -10,6 +10,10 @@
 ## Getting Started
 This repository focuses on the development of an Agent that can translate the human language to actions. The agent is a simple differential drive robot with a camera and a LIDAR sensor.
 
+
+https://github.com/user-attachments/assets/75b40912-9e94-4ff3-9a42-97fb67c94e96
+
+
 ## Current Implementation
 
 - [ ] briefly explain the architecture and workflow
