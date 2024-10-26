@@ -1,338 +1,325 @@
-from time import sleep
-import time
-from typing_extensions import TypedDict
+#### langgraph specific ####
 from langgraph.graph import StateGraph, START, END
 # from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
 from IPython.display import Image, display
 from langgraph.graph import MessagesState
 from langgraph.graph.message import add_messages
-from operator import add
-from langchain.tools import BaseTool, StructuredTool, tool
-from pydantic import BaseModel , Field 
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage , AnyMessage , BaseMessage , RemoveMessage
+from langchain.tools import BaseTool, StructuredTool, tool
+#### general ####
+from time import sleep
+from typing_extensions import TypedDict
+from operator import add
+from pydantic import BaseModel , Field 
 from uuid import uuid4
 from typing import Literal, Dict, Any , Annotated , Optional, Type , Sequence , Callable
-# from .agent import Agent_control
+from dotenv import load_dotenv
 from . import agent
-import asyncio
-import json 
-import random
-import getpass
 import os
 import logging
+from . import state_store
 
-# GLOBAL VARIABLES 
+## GLOBAL VARIABLES ##
 _cached_graph = None
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
-LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT")
+os.environ["LANGCHAIN_PROJECT"] = "language-to-action"
+os.environ["LANGSMITH_TRACING"] = "true"
+
+## ERROR HANDLING ##
 if not GROQ_API_KEY:
     raise ValueError("GROQ_API_KEY environment variable is not set")
 if not OPENAI_API_KEY:
     raise ValueError("GROQ_API_KEY environment variable is not set")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-# Setup the Lidar Retrieval 
+
+#### observation data retrieval ####
 SensorDataGetter = Callable[[], Dict[str, float]]
 _get_sensor_data: SensorDataGetter = lambda: {}
-# Get the user input
+#### user input retrieval ####
 UserInputGetter = Callable[[], str]
 _get_user_input: UserInputGetter = lambda: ""
-# define the control command
+# TODO: we need to remove this global variable passing approach, I have used it for quick testing 
 control_command = "stop"
-
-#Define the State Blueprint 
-class OverallState(TypedDict):
-    """
-    This state of the agent should be updated as we receive input from the user or sensor data.
-    """
-    user_input: str
-    # messages: Annotated[list[dict], add]
-    lidar_data_history: Annotated[list[AnyMessage], add_messages]
-    last_control_output: Annotated[list[AnyMessage], add_messages]
-    pending_tool_calls: list[str]
-    execution_summary: Optional[str]
-    execution_ended: bool
-    iterations: int
 
 class User_Input_Retrieval():
     '''
-    encapsulate the sensor data retrieval logic
+    Encapsulate the user input retrieval logic
     '''     
-    def setter_user_input(getter: SensorDataGetter):
+    def setter_user_input(getter: UserInputGetter):
         global _get_user_input
         _get_user_input = getter
         
     def get_user_input(query: str = "") -> Dict[str, float]:
         data = _get_user_input()
         return data
-class Lidar_retrieval():
+    
+class Observation_Retrieval():
     '''
-    encapsulate the sensor data retrieval logic
+    Encapsulate the observation data retrieval logic
     '''     
-    def setter_sensor_data(getter: SensorDataGetter):
+    def setter_observation_data(getter: SensorDataGetter):
         '''
-        this function replaces the placeholder with the actual sensor data getter that matches the actual implementation
+        this function replaces the placeholder with the actual observation data getter that matches the actual implementation
         It is updated in the agent.py file
         '''
-        global _get_sensor_data
-        _get_sensor_data = getter
+        global _get_observation_data
+        _get_observation_data = getter
         
-    def get_sensor_data(query: str = "") -> Dict[str, float]:
+    def get_observation_data(query: str = "") -> str:
         '''
-        a wrapper around the actual sensor data getter
+        A wrapper around the actual observation data getter
         '''
-        data = _get_sensor_data()
+        data = _get_observation_data()
         return data
-# Graph node : Request Sensor Data
-def update_sensor_data(state: OverallState) -> OverallState:
-    sensor_data = ToolMessage(content=str(Lidar_retrieval.get_sensor_data()), name= "Lidar Sensor Data", tool_call_id=str(uuid4()))
-    state['lidar_data_history'] = sensor_data
-    return state
-
-# Graph Node: Trim the Lidar Sensor to only keep the last two sensor data
-def trim_sensor_data(state: OverallState) -> OverallState:
-    if len(state['lidar_data_history']) >2:
-        delete_some_sensor_data = [RemoveMessage(id=m.id) for m in state['lidar_data_history'][:-2]]
-        state['lidar_data_history'] = delete_some_sensor_data
-    return state
-
-# Graph node to trim the control data to only keep the last two control data
-def trim_control_data(state: OverallState) -> OverallState:
-    if len(state['last_control_output']) > 3:
-        delete_some_control_data = [RemoveMessage(id=m.id) for m in state['last_control_output'][:-3]]
-        state['last_control_output'] = delete_some_control_data
-    return state
-
-def format_lidar_data_history(state: OverallState) -> str:
-    lidar_data_history = state.get('lidar_data_history')
-    formatted_data = []
-
-    for i, data in enumerate(lidar_data_history):
-        if i == 0:
-            time_label = "Previous (t-1): "
-        else:
-            time_label = "Current (t-0): "
-        
-        formatted_data.append(f"{time_label}{data.content}")
-
-    return "\n".join(formatted_data)
-
-def format_control_actions_history(state: OverallState) -> str:
-    last_control_output = state.get('last_control_output')
-    formatted_data = []
-
-    for i, data in enumerate(last_control_output):
-        if i == 0:
-            time_label = " Command Before Last: "
-        elif i == 1:
-            time_label = " Last Command: "
-        else:
-            time_label = " Current Command: "
-        
-        formatted_data.append(f"{time_label}{data.content}")
-
-    return "\n".join(formatted_data)
-
-# TOOL 1 : Robot Control Tool
-class SendControlCommands(BaseModel):
-    '''
-    Arg Schema for the controller tool that interprets the high level control commands and send the commands to a low level controller
-    '''
-    query: str = Field(default="stop", description="the input should be the direction in which you want the robot to move into") 
-
-def high_level_control()-> str:
-    return control_command
-
-async def a_high_level_control(direction:str)-> str:
-    agent.Agent_control.getter_high_level_command(direction)
-    return f"Moving the robot in the {direction} direction"
-
-def send_control_commands(query: str) -> str:
-    global control_command
-    control_command = query
-    agent.Agent_control.getter_high_level_command(high_level_control)
-    return f"Moving the robot in the {query} direction"
-
-async def asend_control_commands(query: str) -> str:
-    response = await a_high_level_control(query)
-    return response
-    
-robot_control_tool = StructuredTool.from_function(
-    name="send_control_commands",
-    func=send_control_commands,
-    description="Use this tool to send the movement commands to the robot, the movement commands can only be forward, left, right or stop",
-    args_schema= SendControlCommands,
-    coroutine= asend_control_commands
-)
-# TOOL 2 : End Execution Tool
-class EndExecution(BaseModel):
-    '''
-    No arguments are needed to call the End Execution tool. This tool stops the movement of the robot. 
-    '''
-    query: str = Field(default="", description="No arguments need to be provided to execute this Tool") 
-
-def end_execution(query: str) -> str:
-    response = high_level_control("stop")
-    return response
-    
-end_exec_tool = StructuredTool.from_function(
-    name="end_execution",
-    func=end_execution,
-    description="Use this tool to end the execution of the robot",
-    args_schema= EndExecution,
-)
 
 def define_model_with_tools() -> Type[ChatOpenAI]:
-    '''
-        define the model with the tools that are required
-        we have lidar sensor and robot control tool 
-    '''
+    """define the model with the tools that are required"""
+    ### OpenAI Model
     model = ChatOpenAI(model="gpt-4o")
-                       
+    
+    ### Llama3 - 70B
     # model = ChatGroq(
     #     model="llama3-70b-8192",
     #     temperature=0,
     #     max_tokens=1000,
     #     request_timeout=60
     # )
-    model_with_tools = model.bind_tools([robot_control_tool, end_exec_tool])
+    
+    model_with_tools = model.bind_tools([robot_control_tool])
     return model_with_tools
 
+# Graph State
+class OverallState(TypedDict):
+    """
+    State of the agent
+    """
+    user_input: str
+    observation: Optional[AnyMessage]
+    previous_control_commands: Annotated[list[AnyMessage], add_messages]
+    previous_decision_output: Optional[AnyMessage]
+    pending_tool_calls: list[str]
+    execution_data_summary: Optional[str]
+    execution_ended: bool
+    iterations: int
 
+# Graph node
+def get_observation(state: OverallState) -> OverallState:
+    '''
+    This function retrieves the scene observation data from the sensors and stores it in the state
+    '''
+    scene_observation = HumanMessage(content=Observation_Retrieval.get_observation_data(),id=str(uuid4()))
+    state['observation'] = scene_observation
+    # Store state update
+    state_store.store_graph_state("observation", scene_observation.content)
+    return state
+
+# Graph node
+def trim_control_data(state: OverallState) -> OverallState:
+    '''
+    We also store the last two control commands, just to imporve the LLMS's
+    context and preventing it from repeating the same commands
+    '''
+    if len(state['previous_control_commands']) > 2:
+        prune_control_commands = [RemoveMessage(id=m.id) for m in state['previous_control_commands'][:-2]]
+        state['previous_control_commands'] = prune_control_commands
+    return state
+
+def format_control_actions_history(state: OverallState) -> str:
+    """
+    Formats the previous control commands history for clarity.
+    This is done to improve the LLM's reasoning output
+    """
+    control_history = state.get('previous_control_commands')
+    formatted_control_data = []
+
+    for i, data in enumerate(control_history):
+        if i == 0:
+            time_label = "Control at t-1: "
+        else:
+            time_label = "Control at t-0: "
+
+        formatted_control_data.append(f"{time_label}{data.content}")
+
+    return "\n".join(formatted_control_data)
+
+# TOOL 1 : Robot Control Tool
+class SendControlCommands(BaseModel):
+    '''
+    Arg Schema: Controller tool that executes the high level control commands
+    '''
+    command: str = Field(default="stop", description="The command should be the direction in which you want the robot to move")
+
+def high_level_control()-> str:
+    '''
+    This function returns the current control command which is used by the agent.py file to send the control commands to the robot
+    '''
+    return control_command
+
+def send_control_commands(command: str) -> str:
+    """Send the control Command to the robot"""
+    global control_command 
+    control_command = command
+    agent.Agent_control.getter_high_level_command(high_level_control)
+    if command == "stop":
+        return "Halted the robot"
+    else:
+        return f"Moving the robot {command}"
+    
+robot_control_tool = StructuredTool.from_function(
+    name="send_control_commands",
+    func=send_control_commands,
+    description="Use this tool to send the control commands to the robot, the control commands can either be forward, left, right, reverse or stop",
+    args_schema= SendControlCommands
+)
+
+# Graph Node
 def brain(state: OverallState) -> OverallState:
+    """This function is the brain of the agent, it takes the observation and control history and reasons about the next action"""
     model_with_tools = define_model_with_tools()
     
     ## GUARD RAILS for Sensor
-    if len(state.get('lidar_data_history')) == 0:
-        sensor_info = "We donot have any sensor data ! Be Cautious and do not move"
+    if state.get('observation') is None or state['observation'].content == "":
+        observation_info = "WARNING: No scene observations available. Safety protocol: Remain stationary."
     else:
-        sensor_info = "This is the history of lidar data, take this into account for making control decison "
-        
+        observation_info = "The scene in front of the robot:"
+
     ## GUARD RAILS for Controller
-    if state.get('last_control_output'):
+    if state.get('previous_control_commands'):
         try:
-            formatted_control_actions = format_control_actions_history(state)
-            control_info = f"These are the last two control commands that you sent to the robot: {formatted_control_actions}"
+            control_info = format_control_actions_history(state)
         except Exception as e:
-            control_info = "Error reading last control output. Send STOP COMMAND !"
+            control_info = "ERROR: Control history unavailable. Safety protocol: Issue STOP command."
     else:
-        control_info = "There are no running control commands, we havent send any control commands, analyze the lidar data to decide what control commands you must send"
-    
-    lidar_data_history = format_lidar_data_history(state)
-    # print(lidar_data_history)
+        control_info = "No previous control commands. Initial movement requires some observation"
+
     messages = [
-        SystemMessage(content="""You are an AI Agent controlling a robot. 
+        SystemMessage(content="""You are controlling a differential drive robot with the following capabilities:
+        Navigation Commands:
+        - forward: Move straight ahead
+        - left: Rotate left
+        - right: Rotate right
+        - stop: Halt all movement
+        - reverse: Move backward
 
-        1. Analyze the lidar sensor readings which give the distance to obstacle in each direction, just try to avoid getting too close to an obstacle or hitting the obstacle. By too close i mean less than 0.5 meters.
-        2. Be curious and move around, try to cover as much area as possible.
-        3. you are given an history of commands that were sent to the robot. Do not change direction too frequently, try to maintain a smooth movement.
-        4. It is okay to send the same command consecutively , if you think that is the right direction to move in.
-        
-        Also, if you observe from the lidar data that there is an obstacle too close to robot, then you should send the stop command to the robot.
+        Decision Making Protocol:
+        1. Uncertainty Handling:
+          - If scene description is not clear, default to STOP or reverse
+          
+        2. Planning:
+          - Analyze the scene description and obstacles
+          - Compare current scene with previous observations and decision outputs
+          - Identify potential exploration paths
+
+        3. Movement Strategy:
+          - If the scene is clear, move forward
+          - If an obstacle is too close like less than 1 meter, stop, reverse and change direction
+
+        4. Exploration Rules:
+          - Move to open spaces 
+          - Be curious and explore new areas
         """),
-        SystemMessage(content=f"{sensor_info}: {lidar_data_history}"),
-        SystemMessage(content=f"{control_info}"),
-        HumanMessage(content=f"User has asked to : {state['user_input']}")
-    ]
-    
-    response = model_with_tools.invoke(messages)
+        HumanMessage(content=f"""Mission Objective: {state['user_input']}
+                     {observation_info} {state['observation']}
+                     Control History: {control_info}
+                     Decision History: {state['previous_decision_output']}""")
+        ]
 
-    state['messages'] = [{"AI": AIMessage(content=response.content)}]
-    # print(response.tool_calls)
+    response = model_with_tools.invoke(messages)
+    state['previous_decision_output'] = [HumanMessage(content=response.content, id=str(uuid4()))]
+    # Store state update
+    state_store.store_graph_state("previous_decision_output", response.content)
     state['pending_tool_calls'] = response.tool_calls if isinstance(response.tool_calls, list) else [response.tool_calls]
-    
     return state
 
-# execute the tools 
+# Graph Node
 def execute_tools(state: OverallState) -> OverallState:
+    """This function executes the tools that are pending"""
     state['iterations'] += 1
     tool_calls = state["pending_tool_calls"]
     for tool_call in tool_calls:
         if isinstance(tool_call, dict):
             if tool_call["name"].lower() == "send_control_commands":
                 result = robot_control_tool.invoke(tool_call["args"])
-                state["last_control_output"] = [result]
-                # state["messages"].append({"Robot Controller Tool": result})
-            elif tool_call["name"].lower() == "end_execution":
-                output = end_exec_tool.invoke(tool_call["args"])
-                # state["messages"].append({"end execution tool": output})
-                state["execution_ended"] = True
+                state["previous_control_commands"] = [HumanMessage(content=result, id=str(uuid4()))]
+                # Store state update
+                state_store.store_graph_state("previous_control_commands", result)
     return state
 
+# Graph Node
 def pause(state: OverallState) -> OverallState:
-    # sleep for 3 seconds, to prevent the excessive API calls to the model
+    """This function pauses the execution for 2 seconds, to prevent the excessive API calls to the model"""
     sleep(2) 
     return state
 
+# Graph Node
 def router(state: OverallState) -> Literal["END", "buffer"]:
+    """This function routes the execution to the appropriate node based on the state of the execution
+        It also checks for the user input and the number of iterations to decide the next node
+    """
     user_input = User_Input_Retrieval.get_user_input()
-    print(f"In graph router, user input is: {user_input}")
-    if state["execution_ended"]:
-        return "END"
-    if state['iterations'] == 3:
+    
+    if state['iterations'] == 100:
         return "END"
     if user_input.lower() == "stop":
         return "END"
     else:
         return "buffer"
     
-    
+# Graph Builder
 def build_graph(graph_builder:StateGraph) -> StateGraph:
-    '''
-    build the graph 
-    '''
-
-    graph_builder.add_node("Lidar", update_sensor_data)
-    graph_builder.add_node("Trim_lidar_history", trim_sensor_data)
-    graph_builder.add_node("Trim_control_history", trim_control_data)
+    """This function builds the graph"""
+    graph_builder.add_node("Scene observation", get_observation)
+    graph_builder.add_node("Prune Control History", trim_control_data)
     graph_builder.add_node("brain", brain)
-    
-    graph_builder.add_edge(START, "Lidar")
-    graph_builder.add_edge("Lidar", "Trim_lidar_history")
-    graph_builder.add_edge("Trim_lidar_history", "Trim_control_history")
-    graph_builder.add_edge("Trim_control_history", "brain")
-    
+
+    graph_builder.add_edge(START, "Scene observation")
+    graph_builder.add_edge("Scene observation", "Prune Control History")
+    graph_builder.add_edge("Prune Control History", "brain")
+
     graph_builder.add_node("Controller", execute_tools)
     graph_builder.add_edge("brain", "Controller")
-    
-    graph_builder.add_node("buffer", pause)
-    graph_builder.add_edge("buffer", "Lidar")
 
-    # graph_builder.add_node("termination", termination)
-    # graph_builder.add_edge("termination", END)
+    graph_builder.add_node("buffer", pause)
+    graph_builder.add_edge("buffer", "Scene observation")
+
 
     graph_builder.add_conditional_edges(
         "Controller",
         router,
         {"END": END, "buffer": "buffer"}
     )
-    
-    graph_builder.set_entry_point("Lidar")
+
+    graph_builder.set_entry_point("Scene observation")
     graph = graph_builder.compile()
     return graph
 
+# Graph Setup
 def setup_graph():
+    """This function sets up the graph"""
     global _cached_graph
     if _cached_graph is None:
         graph_builder = StateGraph(OverallState)
         _cached_graph = build_graph(graph_builder)
     return _cached_graph
 
+# Graph Runner
 def run_graph(user_message: str) -> Dict[str, Any]:
+    """This function executes the graph"""
     initial_state = OverallState({
         "user_input": user_message,
-        "messages": [],
-        "lidar_data_history": [], 
-        "last_control_output": [],  
+        "observation": None,
+        "previous_control_commands": [],
+        "previous_decision_output": None,
         "pending_tool_calls": [],
-        "execution_summary": "",
-        "execution_ended": False,
-        "iterations" : 0,
+        "execution_data_summary": "",
+        "iterations" : 0
     })
     graph = setup_graph()
     actions = graph.invoke(initial_state, {"recursion_limit":1000})
-    
     return actions
+# Initialize state store
+state_store = state_store.StateStore()
