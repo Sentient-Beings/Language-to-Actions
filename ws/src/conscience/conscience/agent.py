@@ -180,15 +180,20 @@ class Agent(Node):
     
     def create_prompt(self,lidar_data):
         """Create a structured prompt combining vision and LiDAR data."""
-        prompt = f"""Analyze this image from the robot's front-facing camera in accordance with the provided LiDAR data.
+        prompt = f"""You are analyzing a real-world scene. The following observations have been made from LiDAR data:
 
-        - Distance to obstacle in front right: {lidar_data['Obstacle in front right']:.2f} meters
-        - Distance to obstacle in front left: {lidar_data['Obstacle in front left']:.2f} meters
-        - Distance to obstacle in front: {lidar_data['Obstacle in front']:.2f} meters
+- LiDAR detects obstacles at:
+    - Front right: {lidar_data['Obstacle in front right']:.2f} meters away
+    - Front left: {lidar_data['Obstacle in front left']:.2f} meters away
+    - Directly in front: {lidar_data['Obstacle in front']:.2f} meters away
 
-        Important:
-        - Describe the scene and by also providing the name of the obstacles and their distance from the robot (Dustbin, Chair, Dumbell, table or whatever you see)
-        - Be descriptive
+Your task is to:
+1. Identify and name the objects you see.
+2. Note any significant features (like color, shape, or size) for each object.
+3. Use the LiDAR data to mention the distances of these objects if applicable.
+4. Describe any potential paths or openings that are clear of obstacles.
+
+Keep the description clear and focused on object identification and navigable areas.
         """
         return prompt
     

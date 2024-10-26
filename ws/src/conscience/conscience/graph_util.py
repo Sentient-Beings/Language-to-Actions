@@ -208,8 +208,7 @@ def brain(state: OverallState) -> OverallState:
         Decision Making Protocol:
         1. Uncertainty Handling:
           - If scene description is not clear, default to STOP or reverse
-          - Avoid rapid direction changes
-
+          
         2. Planning:
           - Analyze the scene description and obstacles
           - Compare current scene with previous observations and decision outputs
@@ -217,7 +216,7 @@ def brain(state: OverallState) -> OverallState:
 
         3. Movement Strategy:
           - Donot repeat the same decisions too frequently
-          - If unclear about the scene, default to STOP or reverse
+          - Donot consecutively change direction like left-right or right-left
 
         4. Exploration Rules:
           - Move to open spaces 
