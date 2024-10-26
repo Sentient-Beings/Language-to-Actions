@@ -5,6 +5,8 @@ from std_msgs.msg import String
 import threading
 from conscience.state_store import StateStore
 import time
+import os
+import base64
 
 class ROSPublisher(Node):
     """Setup the ROS publisher for the user input"""
@@ -113,7 +115,32 @@ class StreamlitApp:
         rclpy.spin(self.ros_publisher)
         
     def run(self):
-        st.title("Language to Action Space")
+        st.markdown("""
+        <style>
+        .header-container {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        .header-logo {
+            width: 80px;
+        }
+        .header-title {
+            font-size: 28px;
+            font-weight: bold;
+            margin: 0;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+        logo_path = os.path.join("conscience", "logo_sentient_beings.png")
+        header_html = f"""
+        <div class="header-container">
+            <img src="data:image/png;base64,{self.get_base64_of_image(logo_path)}" class="header-logo">
+            <h1 class="header-title">Language to Action Space</h1>
+        </div>
+        """
+        st.markdown(header_html, unsafe_allow_html=True)
 
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
@@ -210,6 +237,10 @@ class StreamlitApp:
             rclpy.shutdown()
         except Exception:
             pass
+
+    def get_base64_of_image(self, image_path):
+        with open(image_path, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode('utf-8')
 
 @st.cache_resource
 def get_streamlit_app():
