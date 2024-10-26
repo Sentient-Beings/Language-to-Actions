@@ -215,8 +215,8 @@ def brain(state: OverallState) -> OverallState:
           - Identify potential exploration paths
 
         3. Movement Strategy:
-          - Donot repeat the same decisions too frequently
-          - Donot consecutively change direction like left-right or right-left
+          - If the scene is clear, move forward
+          - If an obstacle is too close like less than 1 meter, stop, reverse and change direction
 
         4. Exploration Rules:
           - Move to open spaces 

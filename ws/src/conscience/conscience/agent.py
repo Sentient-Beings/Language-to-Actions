@@ -189,7 +189,7 @@ class Agent(Node):
 
 Your task is to:
 1. Identify and name the objects you see.
-2. Note any significant features (like color, shape, or size) for each object.
+2. Note any significant features (like shape and size) for each object.
 3. Use the LiDAR data to mention the distances of these objects if applicable.
 4. Describe any potential paths or openings that are clear of obstacles.
 

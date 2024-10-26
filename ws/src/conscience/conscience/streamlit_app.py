@@ -103,7 +103,7 @@ class StreamlitApp:
         if 'updating' not in st.session_state:
             st.session_state.updating = False
         if 'update_interval' not in st.session_state:
-            st.session_state.update_interval = 3 
+            st.session_state.update_interval = 5
         if 'update_count' not in st.session_state:
             st.session_state.update_count = 0
         if 'waiting_for_update' not in st.session_state:
